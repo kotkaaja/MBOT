@@ -35,6 +35,7 @@ logger = setup_logging()
 class Config:
     """Kelas untuk menampung semua variabel konfigurasi dari environment."""
     def __init__(self):
+        # Variabel dari Environment
         self.BOT_TOKEN = os.getenv("BOT_TOKEN")
         self.OPENAI_API_KEYS = [k.strip() for k in os.getenv("OPENAI_API_KEYS", "").split(',') if k.strip()]
         self.GEMINI_API_KEYS = [k.strip() for k in os.getenv("GEMINI_API_KEYS", "").split(',') if k.strip()]
@@ -43,6 +44,14 @@ class Config:
         self.ALLOWED_CHANNEL_IDS = [int(cid.strip()) for cid in os.getenv("ALLOWED_CHANNEL_IDS", "").split(',') if cid.strip()]
         self.ADMIN_CHANNEL_ID = int(os.getenv("ADMIN_CHANNEL_ID")) if os.getenv("ADMIN_CHANNEL_ID") else None
         self.ADMIN_USER_IDS = [int(uid.strip()) for uid in os.getenv("ADMIN_USER_IDS", "").split(',') if uid.strip()]
+
+        # Konstanta Bot
+        self.MAX_FILE_SIZE_MB = 3
+        self.MAX_ARCHIVE_FILES = 5
+        self.COMMAND_COOLDOWN_SECONDS = 60
+        self.DAILY_LIMIT_PER_USER = 10
+        self.QUEUE_MAX_SIZE = 3
+        self.CACHE_EXPIRE_HOURS = 24
 
 # ============================
 # KELAS BOT KUSTOM
