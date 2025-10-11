@@ -7,6 +7,9 @@ import time
 import asyncio
 from dotenv import load_dotenv
 
+# Import database utility
+from utils.database import init_database
+
 # Muat variabel dari .env
 load_dotenv()
 
@@ -45,7 +48,9 @@ class Config:
         self.ADMIN_CHANNEL_ID = int(os.getenv("ADMIN_CHANNEL_ID")) if os.getenv("ADMIN_CHANNEL_ID") else None
         self.ADMIN_USER_IDS = [int(uid.strip()) for uid in os.getenv("ADMIN_USER_IDS", "").split(',') if uid.strip()]
 
-        # Konstanta Bot
+        # Konstanta Bot - Disesuaikan dengan BotScanner
+        self.ALLOWED_EXTENSIONS = ['.lua', '.txt', '.zip', '.7z', '.rar', '.py', '.js', '.php']
+        self.TEMP_DIR = "temp_scan"
         self.MAX_FILE_SIZE_MB = 3
         self.MAX_ARCHIVE_FILES = 5
         self.COMMAND_COOLDOWN_SECONDS = 60
@@ -62,6 +67,7 @@ class MyBot(commands.Bot):
         super().__init__(*args, **kwargs)
         self.config = Config()
         self.start_time = time.time()
+        self.persistent_views_added = False
 
 # Inisialisasi Bot
 intents = discord.Intents.default()
@@ -83,6 +89,14 @@ async def load_cogs():
 
 async def main():
     """Fungsi utama untuk menjalankan bot."""
+    # Inisialisasi database sebelum bot berjalan
+    init_database()
+
+    # Buat direktori temporary jika belum ada
+    if not os.path.exists(bot.config.TEMP_DIR):
+        os.makedirs(bot.config.TEMP_DIR)
+        logger.info(f"✅ Direktori '{bot.config.TEMP_DIR}' berhasil dibuat.")
+        
     async with bot:
         await load_cogs()
         if not bot.config.BOT_TOKEN:
@@ -98,4 +112,3 @@ if __name__ == "__main__":
         asyncio.run(main())
     except KeyboardInterrupt:
         logger.info("🛑 Bot dihentikan oleh user.")
-
