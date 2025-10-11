@@ -1,7 +1,7 @@
 import discord
 from discord.ext import commands
 from discord import ui
-import google.generativeai as genai
+from openai import AsyncOpenAI
 import logging
 from typing import Dict
 
@@ -74,30 +74,36 @@ Story :
 }
 
 # ============================
-# UI COMPONENTS (MODAL & VIEW)
+# UI COMPONENTS (MODAL & VIEWS)
 # ============================
 
 # Modal untuk mengumpulkan data karakter dari pengguna
-class CSInputModal(ui.Modal, title="Formulir Data Character Story"):
+class CSInputModal(ui.Modal, title="Formulir Detail Karakter"):
     nama_char = ui.TextInput(label="Nama Lengkap Karakter (IC)", placeholder="Contoh: John Doe", style=discord.TextStyle.short, required=True)
     tanggal_lahir = ui.TextInput(label="Tanggal Lahir", placeholder="Contoh: 17 Agustus 1995", style=discord.TextStyle.short, required=True)
     kota_asal = ui.TextInput(label="Kota Asal", placeholder="Contoh: Jakarta", style=discord.TextStyle.short, required=True)
+    bakat_dominan = ui.TextInput(label="Bakat/Keahlian Dominan Karakter", placeholder="Contoh: Menembak, memimpin, negosiasi, balapan", style=discord.TextStyle.short, required=True)
+    detail_tambahan = ui.TextInput(label="Detail Tambahan (Opsional)", placeholder="Contoh: Memiliki trauma masa kecil, punya hutang, dll.", style=discord.TextStyle.paragraph, required=False)
 
-    def __init__(self, server: str, bot_instance):
+    def __init__(self, server: str, story_type: str, bot_instance):
         super().__init__()
         self.server = server
+        self.story_type = story_type
         self.bot = bot_instance
 
     async def on_submit(self, interaction: discord.Interaction):
-        await interaction.response.send_message("⏳ Sedang memproses ceritamu dengan AI, mohon tunggu sebentar...", ephemeral=True)
+        await interaction.response.send_message("⏳ AI sedang meracik ceritamu, proses ini butuh waktu sejenak...", ephemeral=True)
         
         try:
-            # Panggil fungsi untuk generate story
-            story_text = await self.bot.get_cog("CharacterStoryCog").generate_story_from_ai(
-                self.server,
-                self.nama_char.value,
-                self.tanggal_lahir.value,
-                self.kota_asal.value
+            # Panggil fungsi untuk generate story dengan parameter baru
+            story_text = await self.bot.get_cog("CharacterStory").generate_story_from_ai(
+                server=self.server,
+                nama_char=self.nama_char.value,
+                tanggal_lahir=self.tanggal_lahir.value,
+                kota_asal=self.kota_asal.value,
+                story_type=self.story_type,
+                bakat=self.bakat_dominan.value,
+                detail=self.detail_tambahan.value
             )
 
             # Format output sesuai server yang dipilih
@@ -111,38 +117,46 @@ class CSInputModal(ui.Modal, title="Formulir Data Character Story"):
 
             # Buat embed untuk hasil
             embed = discord.Embed(
-                title=f"✅ Character Story untuk {self.nama_char.value} Berhasil Dibuat!",
-                description="Berikut adalah draf Character Story kamu. Salin teks di bawah ini dan lengkapi bagian `(Isi manual)`.",
+                title=f"✅ Cerita untuk {self.nama_char.value} Berhasil Dibuat!",
+                description="Berikut draf Character Story kamu. **Salin teks di bawah ini** dan lengkapi bagian `(Isi manual)` sebelum dikirim.",
                 color=discord.Color.green()
             )
-            embed.add_field(name="Server", value=SERVER_CONFIG[self.server]['name'], inline=False)
+            embed.add_field(name="Server", value=SERVER_CONFIG[self.server]['name'], inline=True)
+            embed.add_field(name="Sisi Cerita", value=self.story_type.replace("_", " ").title(), inline=True)
             
             # Kirim hasil dalam beberapa bagian jika terlalu panjang
-            if len(final_cs) > 4000: # Batas Discord
-                await interaction.followup.send(embed=embed, content=final_cs[:1990] + "...", ephemeral=True)
-                await interaction.followup.send(content="..." + final_cs[1990:], ephemeral=True)
+            if len(final_cs) > 1900: 
+                await interaction.followup.send(embed=embed, ephemeral=True)
+                # Split the story into chunks and send
+                for i in range(0, len(final_cs), 1900):
+                    chunk = final_cs[i:i+1900]
+                    await interaction.followup.send(f"```{chunk}```", ephemeral=True)
             else:
                 await interaction.followup.send(embed=embed, content=f"```\n{final_cs}\n```", ephemeral=True)
 
         except Exception as e:
-            logger.error(f"Gagal membuat CS: {e}", exc_info=True)
-            await interaction.followup.send("❌ Terjadi kesalahan saat menghubungi AI. Coba lagi nanti.", ephemeral=True)
+            logger.error(f"Gagal membuat CS dengan OpenAI: {e}", exc_info=True)
+            await interaction.followup.send("❌ Terjadi kesalahan saat menghubungi AI OpenAI. Pastikan API Key valid dan memiliki kuota. Coba lagi nanti.", ephemeral=True)
 
-# View yang berisi tombol untuk memulai proses pembuatan CS
-class CSPanelView(ui.View):
-    def __init__(self, bot_instance):
-        super().__init__(timeout=None) # Timeout None agar view permanen
+# View untuk memilih tipe cerita (Goodside/Badside)
+class StoryTypeView(ui.View):
+    def __init__(self, server: str, bot_instance):
+        super().__init__(timeout=180)
+        self.server = server
         self.bot = bot_instance
 
-    @ui.button(label="Buat Character Story", style=discord.ButtonStyle.primary, emoji="📝", custom_id="create_cs_button")
-    async def create_cs(self, interaction: discord.Interaction, button: ui.Button):
-        # Tampilkan dropdown untuk memilih server
-        await interaction.response.send_message(view=ServerSelectionView(self.bot), ephemeral=True)
+    @ui.button(label="😇 Sisi Baik (Goodside)", style=discord.ButtonStyle.success, emoji="😇")
+    async def good_side(self, interaction: discord.Interaction, button: ui.Button):
+        await interaction.response.send_modal(CSInputModal(server=self.server, story_type="good_side", bot_instance=self.bot))
+
+    @ui.button(label="😈 Sisi Jahat (Badside)", style=discord.ButtonStyle.danger, emoji="😈")
+    async def bad_side(self, interaction: discord.Interaction, button: ui.Button):
+        await interaction.response.send_modal(CSInputModal(server=self.server, story_type="bad_side", bot_instance=self.bot))
 
 # View untuk dropdown pemilihan server
 class ServerSelectionView(ui.View):
     def __init__(self, bot_instance):
-        super().__init__(timeout=180) # Timeout 3 menit
+        super().__init__(timeout=180) 
         self.bot = bot_instance
 
     @ui.select(
@@ -156,8 +170,18 @@ class ServerSelectionView(ui.View):
     )
     async def select_server(self, interaction: discord.Interaction, select: ui.Select):
         server_choice = select.values[0]
-        # Tampilkan modal input setelah server dipilih
-        await interaction.response.send_modal(CSInputModal(server=server_choice, bot_instance=self.bot))
+        # Kirim view untuk memilih tipe cerita
+        await interaction.response.send_message("Pilih alur cerita untuk karaktermu:", view=StoryTypeView(server=server_choice, bot_instance=self.bot), ephemeral=True)
+
+# View utama yang berisi tombol untuk memulai proses
+class CSPanelView(ui.View):
+    def __init__(self, bot_instance):
+        super().__init__(timeout=None) 
+        self.bot = bot_instance
+
+    @ui.button(label="Buat Character Story", style=discord.ButtonStyle.primary, emoji="📝", custom_id="create_cs_button")
+    async def create_cs(self, interaction: discord.Interaction, button: ui.Button):
+        await interaction.response.send_message("Pilih server di mana karaktermu akan bermain:", view=ServerSelectionView(self.bot), ephemeral=True)
 
 # ============================
 # KELAS COG UTAMA
@@ -165,48 +189,65 @@ class ServerSelectionView(ui.View):
 class CharacterStoryCog(commands.Cog, name="CharacterStory"):
     def __init__(self, bot):
         self.bot = bot
-        # Pastikan view persisten didaftarkan
-        if not hasattr(bot, 'persistent_views_added'):
+        if not bot.persistent_views_added:
             bot.add_view(CSPanelView(bot))
             bot.persistent_views_added = True
 
-    async def generate_story_from_ai(self, server: str, nama_char: str, tanggal_lahir: str, kota_asal: str) -> str:
-        """Menghasilkan story dari AI berdasarkan input dan aturan server."""
+    async def generate_story_from_ai(self, server: str, nama_char: str, tanggal_lahir: str, kota_asal: str, story_type: str, bakat: str, detail: str) -> str:
+        """Menghasilkan story dari OpenAI berdasarkan input detail."""
         
-        if not self.bot.config.GEMINI_API_KEYS:
-            raise Exception("API Key Gemini tidak dikonfigurasi.")
+        if not self.bot.config.OPENAI_API_KEYS:
+            raise Exception("API Key OpenAI tidak dikonfigurasi.")
             
-        api_key = self.bot.config.GEMINI_API_KEYS[0] # Ambil key pertama
-        genai.configure(api_key=api_key)
-        model = genai.GenerativeModel('gemini-1.5-flash')
+        api_key = self.bot.config.OPENAI_API_KEYS[0] # Ambil key pertama
+        client = AsyncOpenAI(api_key=api_key)
 
         server_rules = SERVER_CONFIG[server]["rules"]
         
-        prompt = f"""
-        Peran: Anda adalah seorang penulis cerita kreatif yang sangat berpengalaman dalam dunia roleplay GTA San Andreas Multiplayer (SAMP) di Indonesia.
+        story_direction = ""
+        if story_type == "good_side":
+            story_direction = "Cerita harus bernuansa 'goodside'. Fokus pada latar belakang karakter yang baik, normal, atau memiliki tujuan hidup yang positif. Alasan pindah ke Los Santos harus logis untuk mencari kehidupan lebih baik atau bergabung dengan faksi legal seperti kepolisian, medis, atau bisnis."
+        else: # bad_side
+            story_direction = "Cerita harus bernuansa 'badside'. Fokus pada latar belakang yang keras, tumbuh di lingkungan gangster, atau mengalami peristiwa tragis yang mendorongnya ke dunia kejahatan. Alasan pindah ke Los Santos adalah untuk melarikan diri dari masalah atau mencari peluang di dunia kriminal."
 
-        Tugas: Buatlah sebuah Character Story (CS) yang unik, mendalam, dan logis berdasarkan informasi berikut:
+        prompt = f"""
+        Peran: Anda adalah penulis cerita kreatif yang sangat berpengalaman dalam dunia roleplay GTA San Andreas Multiplayer (SAMP) di Indonesia.
+
+        Tugas: Buat sebuah Character Story (CS) yang unik, mendalam, dan logis berdasarkan informasi detail berikut:
         - Nama Karakter: {nama_char}
         - Tanggal Lahir: {tanggal_lahir}
         - Kota Asal: {kota_asal}
+        - Sisi Cerita: {story_type.replace('_', ' ')}
+        - Bakat/Keahlian Utama: {bakat}
+        - Detail Tambahan: {detail if detail else 'Tidak ada.'}
 
-        Cerita harus mengikuti alur naratif yang umum:
-        1. Latar belakang dan kehidupan awal di kota asalnya.
-        2. Sebuah peristiwa penting atau titik balik yang mendorong karakter untuk pindah ke kota Los Santos.
-        3. Perjuangan atau adaptasi awal setelah tiba di Los Santos.
-        4. Kondisi karakter saat ini dan tujuannya di masa depan.
+        Struktur Cerita (WAJIB DIIKUTI):
+        1.  **Latar Belakang:** Ceritakan kehidupan awal karakter di {kota_asal}.
+        2.  **Titik Balik:** Jelaskan satu peristiwa penting yang menjadi alasan utama karakter pindah ke Los Santos. Peristiwa ini harus mencerminkan bakat utamanya ({bakat}).
+        3.  **Adaptasi di Los Santos:** Gambarkan perjuangan atau adaptasi awal setelah tiba di kota baru.
+        4.  **Tujuan Masa Depan:** Jelaskan kondisi karakter saat ini dan apa tujuannya di Los Santos.
 
-        ATURAN WAJIB UNTUK SERVER {SERVER_CONFIG[server]["name"]}:
+        Instruksi Spesifik:
+        -   **{story_direction}**
+        -   Integrasikan bakat '{bakat}' secara menonjol dalam alur cerita, terutama di bagian 'Titik Balik'.
+        -   Gunakan 'Detail Tambahan' untuk memberi kedalaman pada karakter.
+
+        ATURAN TEKNIS WAJIB UNTUK SERVER '{SERVER_CONFIG[server]["name"]}':
         {server_rules}
 
-        Hasil akhir harus berupa cerita saja, tanpa judul atau format tambahan. Pastikan cerita yang dihasilkan menarik dan konsisten.
+        Output akhir harus berupa teks cerita saja, tanpa judul atau format tambahan. Pastikan cerita yang dihasilkan menarik, konsisten, dan memenuhi semua aturan.
         """
         
-        logger.info(f"Mengirim prompt ke Gemini untuk karakter {nama_char}...")
-        response = await model.generate_content_async(prompt)
+        logger.info(f"Mengirim prompt ke OpenAI untuk karakter {nama_char}...")
+        response = await client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0.7,
+            max_tokens=1000,
+        )
         
-        # Membersihkan jika ada markdown
-        cleaned_story = response.text.strip().replace("```", "")
+        story_text = response.choices[0].message.content
+        cleaned_story = story_text.strip().replace("```", "")
         
         return cleaned_story
 
@@ -215,21 +256,18 @@ class CharacterStoryCog(commands.Cog, name="CharacterStory"):
     async def setup_cs_panel(self, ctx):
         """Mengirim panel untuk membuat Character Story (Admin only)."""
         embed = discord.Embed(
-            title="📝 Panel Pembuatan Character Story",
-            description="Gunakan tombol di bawah ini untuk memulai proses pembuatan **Character Story (CS)** berbasis AI.",
-            color=0x5865F2 # Warna Discord Blurple
+            title="📝 Panel Pembuatan Character Story (AI)",
+            description="Tekan tombol di bawah untuk memulai proses pembuatan **Character Story (CS)** yang lebih detail dan sesuai keinginanmu.",
+            color=0x5865F2
         )
         embed.add_field(
-            name="Ringkasan Aturan Umum",
-            value="• Minimal 4 paragraf & 200+ kata.\n"
-                  "• Bahasa Indonesia baku, tanpa plagiarisme.\n"
-                  "• Usia karakter minimal 17 tahun.\n\n"
-                  "*Bot akan secara otomatis menyesuaikan cerita dengan aturan spesifik dari server yang kamu pilih.*"
+            name="Alur Baru",
+            value="1. Pilih Server\n2. Pilih Sisi Cerita (Baik/Jahat)\n3. Isi Detail Karakter (Nama, Bakat, dll.)",
+            inline=False
         )
-        embed.set_footer(text="Tekan tombol di bawah untuk memulai.")
+        embed.set_footer(text="Bot ini menggunakan OpenAI untuk menghasilkan cerita.")
 
         await ctx.send(embed=embed, view=CSPanelView(self.bot))
 
 async def setup(bot):
     await bot.add_cog(CharacterStoryCog(bot))
-
