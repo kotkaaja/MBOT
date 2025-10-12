@@ -337,9 +337,9 @@ class CharacterStoryCog(commands.Cog, name="CharacterStory"):
 
     @commands.command(name="setupcs")
     async def setup_cs_panel(self, ctx):
-        """Mengirim panel untuk membuat Character Story (Admin only)."""
+        """Mengirim panel untuk membuat Character Story."""
         embed = discord.Embed(
-            title="📝 Panel Pembuatan Character Story (AI)",
+            title="📝 Panel Pembuatan Character Story",
             description="Tekan tombol di bawah untuk memulai proses pembuatan **Character Story (CS)** yang lebih detail dan sesuai keinginanmu.",
             color=0x5865F2
         )
@@ -348,7 +348,7 @@ class CharacterStoryCog(commands.Cog, name="CharacterStory"):
             value="1. Pilih Server\n2. Pilih Sisi Cerita (Baik/Jahat)\n3. Isi Detail Lengkap Karakter (Nama, Kultur, Bakat, dll.)",
             inline=False
         )
-        embed.set_footer(text="Bot ini menggunakan OpenAI untuk menghasilkan cerita yang lebih kaya.")
+        embed.set_footer(text="Created By Kotkaaja.")
 
         await ctx.send(embed=embed, view=CSPanelView(self.bot))
 
