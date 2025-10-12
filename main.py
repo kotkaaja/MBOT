@@ -7,10 +7,8 @@ import time
 import asyncio
 from dotenv import load_dotenv
 
-# Import database utility
 from utils.database import init_database
 
-# Muat variabel dari .env
 load_dotenv()
 
 # ============================
@@ -33,15 +31,18 @@ def setup_logging():
 logger = setup_logging()
 
 # ============================
-# KELAS KONFIGURASI
+# KELAS KONFIGURASI (VERSI LENGKAP)
 # ============================
 class Config:
     """Kelas untuk menampung semua variabel konfigurasi dari environment."""
     def __init__(self):
+        # Variabel Inti & API Keys
         self.BOT_TOKEN = os.getenv("BOT_TOKEN")
         self.OPENAI_API_KEYS = [k.strip() for k in os.getenv("OPENAI_API_KEYS", "").split(',') if k.strip()]
         self.GEMINI_API_KEYS = [k.strip() for k in os.getenv("GEMINI_API_KEYS", "").split(',') if k.strip()]
         self.DEEPSEEK_API_KEYS = [k.strip() for k in os.getenv("DEEPSEEK_API_KEYS", "").split(',') if k.strip()]
+        
+        # Variabel untuk Fitur Scanner
         self.ALERT_CHANNEL_ID = int(os.getenv("ALERT_CHANNEL_ID")) if os.getenv("ALERT_CHANNEL_ID") else None
         self.ALLOWED_CHANNEL_IDS = [int(cid.strip()) for cid in os.getenv("ALLOWED_CHANNEL_IDS", "").split(',') if cid.strip()]
         self.ADMIN_CHANNEL_ID = int(os.getenv("ADMIN_CHANNEL_ID")) if os.getenv("ADMIN_CHANNEL_ID") else None
@@ -80,18 +81,17 @@ async def on_command_error(ctx: commands.Context, error: commands.CommandError):
         return
 
     if isinstance(error, commands.MissingPermissions):
-        await ctx.send("❌ Anda harus menjadi **Administrator** untuk menggunakan perintah ini.", ephemeral=True, delete_after=15)
+        await ctx.send("❌ Anda harus menjadi **Administrator** untuk menggunakan perintah ini.", delete_after=15)
     elif isinstance(error, commands.CommandOnCooldown):
-        await ctx.send(f"⏳ Cooldown. Coba lagi dalam **{error.retry_after:.1f} detik**.", ephemeral=True, delete_after=10)
+        await ctx.send(f"⏳ Cooldown. Coba lagi dalam **{error.retry_after:.1f} detik**.", delete_after=10)
     elif isinstance(error, commands.MissingRequiredArgument):
-        await ctx.send(f"❌ Argumen kurang. Contoh: `!{ctx.command.name} server untuk komunitas Valorant`", ephemeral=True, delete_after=15)
+        await ctx.send(f"❌ Argumen kurang. Contoh: `!{ctx.command.name} server untuk komunitas Valorant`", delete_after=15)
     elif isinstance(error, commands.CommandInvokeError):
         logger.error(f"Error pada perintah '{ctx.command.qualified_name}': {error.original}", exc_info=True)
-        await ctx.send("❌ Terjadi kesalahan internal saat menjalankan perintah.", ephemeral=True, delete_after=10)
+        await ctx.send("❌ Terjadi kesalahan internal saat menjalankan perintah.", delete_after=10)
     else:
         logger.error(f"Error tidak dikenal: {error}", exc_info=True)
-        # Jangan kirim pesan untuk setiap error aneh untuk menghindari spam
-        
+
 # ============================
 # FUNGSI UTAMA
 # ============================
@@ -107,10 +107,15 @@ async def load_cogs():
 
 async def main():
     """Fungsi utama untuk menjalankan bot."""
-    init_database()
+    # Inisialisasi database setelah bot siap
+    @bot.event
+    async def on_ready():
+        logger.info(f'Logged in as {bot.user} (ID: {bot.user.id})')
+        logger.info('------')
+        init_database()
+
     if not os.path.exists(bot.config.TEMP_DIR):
         os.makedirs(bot.config.TEMP_DIR)
-        logger.info(f"✅ Direktori '{bot.config.TEMP_DIR}' berhasil dibuat.")
         
     async with bot:
         await load_cogs()
