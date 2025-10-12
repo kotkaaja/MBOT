@@ -76,33 +76,22 @@ bot = MyBot(command_prefix='!', intents=intents, help_command=None)
 @bot.event
 async def on_command_error(ctx: commands.Context, error: commands.CommandError):
     """Error handler global untuk semua perintah."""
-    # Mengabaikan error jika perintah tidak ditemukan
     if isinstance(error, commands.CommandNotFound):
         return
 
-    # Menangani error spesifik
-    if isinstance(error, commands.NotGuildOwner):
-        await ctx.send("❌ Perintah ini hanya untuk pemilik server.", ephemeral=True, delete_after=10)
+    if isinstance(error, commands.MissingPermissions):
+        await ctx.send("❌ Anda harus menjadi **Administrator** untuk menggunakan perintah ini.", ephemeral=True, delete_after=15)
     elif isinstance(error, commands.CommandOnCooldown):
         await ctx.send(f"⏳ Cooldown. Coba lagi dalam **{error.retry_after:.1f} detik**.", ephemeral=True, delete_after=10)
     elif isinstance(error, commands.MissingRequiredArgument):
-        await ctx.send(f"❌ Argumen kurang. Contoh: `!{ctx.command.name} server untuk komunitas Valorant`", ephemeral=True, delete_after=10)
-    
-    # Menangani error yang lebih umum yang berasal dari check
-    elif isinstance(error, commands.CheckFailure):
-        # Ini akan menangkap NotGuildOwner dan check lainnya jika ada
-        await ctx.send("❌ Anda tidak memiliki izin untuk menggunakan perintah ini.", ephemeral=True, delete_after=10)
-    
-    # Menangani error saat menjalankan perintah
+        await ctx.send(f"❌ Argumen kurang. Contoh: `!{ctx.command.name} server untuk komunitas Valorant`", ephemeral=True, delete_after=15)
     elif isinstance(error, commands.CommandInvokeError):
         logger.error(f"Error pada perintah '{ctx.command.qualified_name}': {error.original}", exc_info=True)
         await ctx.send("❌ Terjadi kesalahan internal saat menjalankan perintah.", ephemeral=True, delete_after=10)
-    
-    # Error fallback
     else:
         logger.error(f"Error tidak dikenal: {error}", exc_info=True)
-        await ctx.send("❌ Terjadi kesalahan tak terduga.", ephemeral=True, delete_after=10)
-
+        # Jangan kirim pesan untuk setiap error aneh untuk menghindari spam
+        
 # ============================
 # FUNGSI UTAMA
 # ============================
@@ -138,3 +127,4 @@ if __name__ == "__main__":
         asyncio.run(main())
     except KeyboardInterrupt:
         logger.info("🛑 Bot dihentikan.")
+
