@@ -167,6 +167,50 @@ class ConverterCog(commands.Cog, name="Converter"):
             logger.error(f"Error getting Spotify info: {e}", exc_info=True)
         return None
 
+    @commands.command(name="testlink", aliases=['test'])
+    @commands.cooldown(1, 10, commands.BucketType.user)
+    async def test_link(self, ctx, *, url: str):
+        """Test apakah link YouTube bisa didownload (tanpa convert)."""
+        msg = await ctx.send("🔍 **Testing link...**")
+        
+        try:
+            ydl_opts = {
+                'quiet': True,
+                'no_warnings': True,
+                'skip_download': True,
+                'geo_bypass': True,
+                'geo_bypass_country': 'US',
+                'extract_flat': False
+            }
+            
+            loop = asyncio.get_event_loop()
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                info = await loop.run_in_executor(None, lambda: ydl.extract_info(url, download=False))
+                
+                if info:
+                    title = info.get('title', 'Unknown')
+                    duration = info.get('duration', 0)
+                    uploader = info.get('uploader', 'Unknown')
+                    
+                    duration_str = f"{duration//60}:{duration%60:02d}" if duration else "Unknown"
+                    
+                    embed = discord.Embed(
+                        title="✅ Link Valid!",
+                        description=f"**{title}**",
+                        color=0x00FF00
+                    )
+                    embed.add_field(name="📺 Channel", value=uploader, inline=True)
+                    embed.add_field(name="⏱️ Durasi", value=duration_str, inline=True)
+                    embed.set_footer(text="Link ini bisa diconvert dengan !convert")
+                    
+                    await msg.edit(content=None, embed=embed)
+                else:
+                    await msg.edit(content="❌ Tidak bisa mendapatkan info video.")
+                    
+        except Exception as e:
+            error_msg = str(e)[:200]
+            await msg.edit(content=f"❌ **Link Error!**\n```{error_msg}```")
+
     @commands.command(name="convert")
     @commands.cooldown(1, 60, commands.BucketType.user)
     async def convert_command(self, ctx, *, url: str):
@@ -200,24 +244,32 @@ class ConverterCog(commands.Cog, name="Converter"):
         # Jika Spotify, gunakan search query. Jika YouTube, gunakan URL langsung
         download_url = search_query if is_spotify else url
         
-        # Opsi yt-dlp
+        # Opsi yt-dlp dengan bypass geo-restriction
         ydl_opts = {
             'format': 'bestaudio/best',
             'postprocessors': [{
                 'key': 'FFmpegExtractAudio',
                 'preferredcodec': 'mp3',
-                'preferredquality': '128',  # Kualitas lebih rendah untuk upload lebih cepat
+                'preferredquality': '128',
             }],
             'outtmpl': f'temp/{ctx.message.id}',
             'noplaylist': True,
             'quiet': True,
             'no_warnings': True,
             'default_search': 'ytsearch',
+            'geo_bypass': True,  # Bypass geo-restriction
+            'geo_bypass_country': 'US',  # Pretend from US
+            'nocheckcertificate': True,
+            'ignoreerrors': False,
+            'extract_flat': False,
             'extractor_args': {
                 'youtube': {
                     'skip': ['hls', 'dash'],
+                    'player_client': ['android', 'web'],  # Use multiple clients
                 }
             },
+            # Cookies untuk bypass age restriction (opsional)
+            'cookiefile': None,
         }
         
         filename = None
@@ -314,8 +366,20 @@ class ConverterCog(commands.Cog, name="Converter"):
             await processing_msg.edit(content=f"✅ **Selesai!** Link streaming telah dikirim ke {upload_channel.mention}")
 
         except yt_dlp.utils.DownloadError as e:
+            error_msg = str(e).lower()
             logger.error(f"yt-dlp error: {e}")
-            await processing_msg.edit(content="❌ Gagal mengunduh. Video mungkin privat atau tidak tersedia di wilayah Anda.")
+            
+            # Pesan error yang lebih spesifik
+            if 'private' in error_msg or 'unavailable' in error_msg:
+                await processing_msg.edit(content="❌ **Video tidak tersedia!**\n📌 Video mungkin:\n• Private/Unlisted\n• Dihapus oleh uploader\n• Geo-blocked di wilayah Anda")
+            elif 'age' in error_msg or 'sign in' in error_msg:
+                await processing_msg.edit(content="❌ **Video dibatasi umur!**\n📌 Video memerlukan login YouTube.\n💡 Coba video lain tanpa age restriction.")
+            elif 'copyright' in error_msg:
+                await processing_msg.edit(content="❌ **Video di-takedown karena copyright.**\n💡 Coba cari versi lain dari lagu tersebut.")
+            elif 'premium' in error_msg or 'membership' in error_msg:
+                await processing_msg.edit(content="❌ **Video khusus members/premium.**\n💡 Video ini hanya untuk subscriber berbayar.")
+            else:
+                await processing_msg.edit(content=f"❌ **Gagal download!**\n📌 Error: `{str(e)[:200]}`\n💡 Coba video/link lain.")
         except Exception as e:
             logger.error(f"Converter error: {e}", exc_info=True)
             await processing_msg.edit(content=f"❌ Terjadi kesalahan: `{str(e)[:100]}`")
