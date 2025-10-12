@@ -6,12 +6,31 @@ import logging
 logger = logging.getLogger(__name__)
 DB_FILE = 'scanner.db'
 
+# --- Objek Koneksi Global ---
+# Kita buat satu koneksi di sini yang akan digunakan kembali
+db_connection = None
+
+def get_db_connection():
+    """Membuat atau mengembalikan koneksi database yang sudah ada."""
+    global db_connection
+    if db_connection is None:
+        try:
+            db_connection = sqlite3.connect(DB_FILE)
+            logger.info("Koneksi database berhasil dibuat.")
+        except Exception as e:
+            logger.error("Gagal membuat koneksi database persisten.", exc_info=e)
+    return db_connection
+
 def init_database():
     """
     Menginisialisasi database SQLite dan membuat semua tabel yang diperlukan.
     """
+    conn = get_db_connection()
+    if not conn:
+        logger.error("Tidak bisa inisialisasi database karena koneksi gagal.")
+        return
+        
     try:
-        conn = sqlite3.connect(DB_FILE)
         cursor = conn.cursor()
         
         # Tabel untuk fitur Scanner
@@ -45,7 +64,7 @@ def init_database():
         ''')
         
         conn.commit()
-        conn.close()
+        # Jangan tutup koneksi di sini
         logger.info(f"Database '{DB_FILE}' berhasil diinisialisasi dengan semua tabel.")
     except Exception as e:
         logger.error("Gagal menginisialisasi database.", exc_info=e)
@@ -53,24 +72,24 @@ def init_database():
 # --- Fungsi untuk MP3 Converter ---
 def set_upload_channel(guild_id: int, channel_id: int):
     """Menyimpan atau memperbarui channel unggah untuk sebuah server."""
+    conn = get_db_connection()
+    if not conn: return
     try:
-        conn = sqlite3.connect(DB_FILE)
         cursor = conn.cursor()
         cursor.execute('INSERT OR REPLACE INTO server_settings (guild_id, upload_channel_id) VALUES (?, ?)', (guild_id, channel_id))
         conn.commit()
-        conn.close()
     except Exception as e:
         logger.error(f"Gagal mengatur upload channel untuk guild {guild_id}", exc_info=e)
 
 
 def get_upload_channel(guild_id: int) -> int or None:
     """Mengambil channel unggah yang tersimpan untuk sebuah server."""
+    conn = get_db_connection()
+    if not conn: return None
     try:
-        conn = sqlite3.connect(DB_FILE)
         cursor = conn.cursor()
         cursor.execute('SELECT upload_channel_id FROM server_settings WHERE guild_id = ?', (guild_id,))
         result = cursor.fetchone()
-        conn.close()
         return result[0] if result else None
     except Exception as e:
         logger.error(f"Gagal mengambil upload channel untuk guild {guild_id}", exc_info=e)
@@ -79,13 +98,13 @@ def get_upload_channel(guild_id: int) -> int or None:
 # --- Fungsi untuk Scanner ---
 async def check_daily_limit(user_id: int, limit: int) -> bool:
     """Memeriksa batas scan harian pengguna."""
+    conn = get_db_connection()
+    if not conn: return False
     try:
         today = datetime.now().strftime('%Y-%m-%d')
-        conn = sqlite3.connect(DB_FILE)
         cursor = conn.cursor()
         cursor.execute('SELECT count FROM daily_usage WHERE user_id = ? AND date = ?', (user_id, today))
         result = cursor.fetchone()
-        conn.close()
         if result and result[0] >= limit:
             return False
         return True
@@ -96,22 +115,23 @@ async def check_daily_limit(user_id: int, limit: int) -> bool:
 
 def increment_daily_usage(user_id: int):
     """Menambah hitungan scan harian pengguna."""
+    conn = get_db_connection()
+    if not conn: return
     try:
         today = datetime.now().strftime('%Y-%m-%d')
-        conn = sqlite3.connect(DB_FILE)
         cursor = conn.cursor()
         cursor.execute('INSERT OR IGNORE INTO daily_usage (user_id, date, count) VALUES (?, ?, 0)', (user_id, today))
         cursor.execute('UPDATE daily_usage SET count = count + 1 WHERE user_id = ? AND date = ?', (user_id, today))
         conn.commit()
-        conn.close()
     except Exception as e:
         logger.error(f"Gagal menambah daily usage untuk user {user_id}", exc_info=e)
 
 
 def save_scan_history(user_id: int, filename: str, file_hash: str, danger_level: int, analyst: str, channel_id: int):
     """Menyimpan riwayat scan."""
+    conn = get_db_connection()
+    if not conn: return
     try:
-        conn = sqlite3.connect(DB_FILE)
         cursor = conn.cursor()
         cursor.execute('''
             INSERT INTO scan_history 
@@ -119,7 +139,6 @@ def save_scan_history(user_id: int, filename: str, file_hash: str, danger_level:
             VALUES (?, ?, ?, ?, ?, ?)
         ''', (user_id, filename, file_hash, danger_level, analyst, channel_id))
         conn.commit()
-        conn.close()
     except Exception as e:
         logger.error(f"Gagal menyimpan riwayat scan untuk file {filename}", exc_info=e)
 
@@ -127,13 +146,13 @@ def save_scan_history(user_id: int, filename: str, file_hash: str, danger_level:
 # --- Fungsi untuk Character Story ---
 def check_char_story_cooldown(user_id: int) -> bool:
     """Memeriksa cooldown harian untuk Character Story."""
+    conn = get_db_connection()
+    if not conn: return False
     try:
         today = datetime.now().strftime('%Y-%m-%d')
-        conn = sqlite3.connect(DB_FILE)
         cursor = conn.cursor()
         cursor.execute('SELECT last_used_date FROM char_story_cooldown WHERE user_id = ?', (user_id,))
         result = cursor.fetchone()
-        conn.close()
         if result and result[0] == today:
             return False
         return True
@@ -144,13 +163,13 @@ def check_char_story_cooldown(user_id: int) -> bool:
 
 def set_char_story_cooldown(user_id: int):
     """Mengatur cooldown harian untuk Character Story."""
+    conn = get_db_connection()
+    if not conn: return
     try:
         today = datetime.now().strftime('%Y-%m-%d')
-        conn = sqlite3.connect(DB_FILE)
         cursor = conn.cursor()
         cursor.execute('INSERT OR REPLACE INTO char_story_cooldown (user_id, last_used_date) VALUES (?, ?)', (user_id, today))
         conn.commit()
-        conn.close()
     except Exception as e:
         logger.error(f"Gagal mengatur cooldown char_story untuk user {user_id}", exc_info=e)
 
