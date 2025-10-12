@@ -7,7 +7,6 @@ logger = logging.getLogger(__name__)
 DB_FILE = 'scanner.db'
 
 # --- Objek Koneksi Global ---
-# Kita buat satu koneksi di sini yang akan digunakan kembali
 db_connection = None
 
 def get_db_connection():
@@ -15,8 +14,9 @@ def get_db_connection():
     global db_connection
     if db_connection is None:
         try:
-            db_connection = sqlite3.connect(DB_FILE)
-            logger.info("Koneksi database berhasil dibuat.")
+            # PERBAIKAN: Menambahkan check_same_thread=False agar aman untuk async
+            db_connection = sqlite3.connect(DB_FILE, check_same_thread=False)
+            logger.info("Koneksi database persisten berhasil dibuat (thread-safe).")
         except Exception as e:
             logger.error("Gagal membuat koneksi database persisten.", exc_info=e)
     return db_connection
@@ -64,7 +64,6 @@ def init_database():
         ''')
         
         conn.commit()
-        # Jangan tutup koneksi di sini
         logger.info(f"Database '{DB_FILE}' berhasil diinisialisasi dengan semua tabel.")
     except Exception as e:
         logger.error("Gagal menginisialisasi database.", exc_info=e)
