@@ -11,16 +11,6 @@ from openai import AsyncOpenAI
 logger = logging.getLogger(__name__)
 
 # =================================================================================
-# CUSTOM CHECK
-# =================================================================================
-
-def is_guild_owner():
-    """Custom check untuk memverifikasi apakah pengguna adalah pemilik server."""
-    async def predicate(ctx: commands.Context) -> bool:
-        return ctx.author == ctx.guild.owner
-    return commands.check(predicate)
-
-# =================================================================================
 # PROMPT ENGINEERING UNTUK OPENAI
 # =================================================================================
 
@@ -86,7 +76,6 @@ class ChannelToggleButton(ui.Button):
     async def callback(self, interaction: discord.Interaction):
         self.selected = not self.selected
         self.style = discord.ButtonStyle.green if self.selected else discord.ButtonStyle.secondary
-        # Memanggil fungsi update di view parent-nya
         if hasattr(self.view, 'update_selection'):
             await self.view.update_selection(self.category_name, self.channel_data, self.selected)
         await interaction.response.edit_message(view=self.view)
@@ -139,7 +128,6 @@ class ServerCreationView(BaseInteractiveView):
         self._populate_items()
 
     def _populate_items(self):
-        # Bersihkan item lama sebelum menambahkan yang baru
         self.clear_items()
         for category in self.proposal.get('categories', []):
             for channel in category['channels']:
@@ -161,7 +149,6 @@ class ServerCreationView(BaseInteractiveView):
         async def callback(self, interaction: discord.Interaction):
             view: 'ServerCreationView' = self.view
             await view._disable_all(); await interaction.response.edit_message(content="⏳ Membangun struktur server...", embed=None, view=view)
-            # ... Logika pembuatan (disingkat untuk kejelasan, tidak diubah dari sebelumnya) ...
             guild = interaction.guild
             logs = []
             if view.create_roles_enabled and view.proposal.get("roles"):
@@ -207,7 +194,6 @@ class ServerCreationView(BaseInteractiveView):
 class CategoryCreationView(ServerCreationView):
     """Tampilan untuk !createcategory, mewarisi fungsionalitas dari ServerCreationView."""
     def __init__(self, cog, ctx: commands.Context, deskripsi: str, proposal: Dict[str, Any]):
-        # Mengubah proposal kategori tunggal menjadi format multi-kategori
         super_proposal = {'categories': [proposal]}
         super().__init__(cog, ctx, deskripsi, super_proposal)
 
@@ -224,13 +210,12 @@ class CategoryCreationView(ServerCreationView):
         await interaction.response.edit_message(content=f"🔄 Meminta proposal baru dari AI untuk: *\"{self.deskripsi}\"*...", view=None, embed=None)
         await self.cog.create_category(self.ctx, deskripsi=self.deskripsi, existing_message=interaction.message)
 
-    class ConfirmButton(ui.Button): # Override tombol confirm
+    class ConfirmButton(ui.Button):
         def __init__(self): super().__init__(label="Buat Kategori", style=discord.ButtonStyle.green, emoji="✅", row=4)
         async def callback(self, interaction: discord.Interaction):
             view: 'CategoryCreationView' = self.view
             await view._disable_all()
             await interaction.response.edit_message(content=f"⏳ Membuat kategori...", embed=None, view=view)
-            # ... Logika pembuatan kategori (mirip dengan server, tapi lebih simpel) ...
             guild = interaction.guild
             logs = []
             for cat_name, channels in view.selections.items():
@@ -242,8 +227,7 @@ class CategoryCreationView(ServerCreationView):
                         await asyncio.sleep(0.5)
                         if ch['type'] == 'text': await category.create_text_channel(name=ch['name'])
                         elif ch['type'] == 'voice': await category.create_voice_channel(name=ch['name'])
-                except Exception as e:
-                    logs.append(f"❌ Gagal membuat: {e}")
+                except Exception as e: logs.append(f"❌ Gagal membuat: {e}")
             result_message = "\n".join(logs) if logs else "Tidak ada yang dibuat."
             await interaction.edit_original_response(content=result_message, view=None)
 
@@ -269,13 +253,14 @@ class ServerCreatorCog(commands.Cog, name="ServerCreator"):
         return json.loads(response.choices[0].message.content)
 
     @commands.command(name="createserver", help="Membuat struktur server lengkap menggunakan proposal AI.")
-    @is_guild_owner()
+    @commands.has_permissions(administrator=True)
     @commands.cooldown(1, 120, commands.BucketType.user)
     async def create_server(self, ctx: commands.Context, *, deskripsi: str, existing_message: Optional[discord.Message] = None):
-        message_handler = existing_message or ctx
-        content = f"🤖 AI sedang merancang proposal server untuk: *\"{deskripsi}\"*... mohon tunggu."
-        if existing_message: await existing_message.edit(content=content, view=None, embed=None)
-        else: msg = await ctx.send(content); message_handler = msg
+        message_handler = existing_message
+        if not message_handler:
+            message_handler = await ctx.send(f"🤖 AI sedang merancang proposal server untuk: *\"{deskripsi}\"*... mohon tunggu.")
+        else:
+            await message_handler.edit(content=f"🤖 AI sedang merancang proposal server untuk: *\"{deskripsi}\"*... mohon tunggu.", view=None, embed=None)
 
         try:
             proposal = await self._get_ai_proposal(SYSTEM_PROMPT_FULL_SERVER, deskripsi)
@@ -288,17 +273,17 @@ class ServerCreatorCog(commands.Cog, name="ServerCreator"):
             await message_handler.edit(content=f"❌ Terjadi kesalahan saat berkomunikasi dengan AI: {e}")
 
     @commands.command(name="createcategory", help="Membuat satu kategori interaktif menggunakan proposal AI.")
-    @is_guild_owner()
+    @commands.has_permissions(administrator=True)
     @commands.cooldown(1, 60, commands.BucketType.user)
     async def create_category(self, ctx: commands.Context, *, deskripsi: str, existing_message: Optional[discord.Message] = None):
-        message_handler = existing_message or ctx
-        content = f"🤖 AI sedang merancang proposal kategori untuk: *\"{deskripsi}\"*..."
-        if existing_message: await existing_message.edit(content=content, view=None, embed=None)
-        else: msg = await ctx.send(content); message_handler = msg
-
+        message_handler = existing_message
+        if not message_handler:
+            message_handler = await ctx.send(f"🤖 AI sedang merancang proposal kategori untuk: *\"{deskripsi}\"*...")
+        else:
+            await message_handler.edit(content=f"🤖 AI sedang merancang proposal kategori untuk: *\"{deskripsi}\"*...", view=None, embed=None)
+        
         try:
             proposal = await self._get_ai_proposal(SYSTEM_PROMPT_SINGLE_CATEGORY, deskripsi)
-            # Mengubah nama kunci agar konsisten dengan format multi-kategori
             proposal['name'] = proposal.pop('category_name')
             embed = discord.Embed(title=f"🤖 Proposal Kategori AI", description=f"Pilih channel yang ingin dibuat untuk kategori **{proposal['name']}**.", color=0x3498DB)
             view = CategoryCreationView(self, ctx, deskripsi, proposal)
@@ -307,7 +292,7 @@ class ServerCreatorCog(commands.Cog, name="ServerCreator"):
             await message_handler.edit(content=f"❌ Terjadi kesalahan saat berkomunikasi dengan AI: {e}")
 
     @commands.command(name="deletecategory", help="Menghapus kategori dan semua isinya.")
-    @is_guild_owner()
+    @commands.has_permissions(administrator=True)
     async def delete_category(self, ctx: commands.Context, *, category_name: str):
         category = discord.utils.get(ctx.guild.categories, name=category_name)
         if not category: return await ctx.send(f"⚠️ Kategori `{category_name}` tidak ditemukan.")
@@ -325,7 +310,6 @@ class ServerCreatorCog(commands.Cog, name="ServerCreator"):
         await view.wait()
         try: await warning_msg.delete()
         except discord.NotFound: pass
-
         if view.confirmed:
             processing_msg = await ctx.send(f"⏳ Menghapus `{category_name}`...")
             try:
@@ -340,17 +324,6 @@ class ServerCreatorCog(commands.Cog, name="ServerCreator"):
                 except discord.NotFound: logger.warning(f"Gagal kirim error hapus '{category_name}'.")
         else:
             await ctx.send("Penghapusan dibatalkan.", delete_after=10)
-
-    async def cog_command_error(self, ctx: commands.Context, error: commands.CommandError):
-        # Error handler umum
-        if isinstance(error, commands.CheckFailure):
-            await ctx.send(f"❌ Perintah ini hanya untuk pemilik server.", ephemeral=True)
-        elif isinstance(error, commands.CommandOnCooldown):
-            await ctx.send(f"⏳ Cooldown. Coba lagi dalam **{error.retry_after:.1f} detik**.", ephemeral=True)
-        elif isinstance(error, commands.MissingRequiredArgument):
-            await ctx.send(f"❌ Anda perlu memberikan deskripsi. Contoh: `!createserver server untuk komunitas game Valorant`", ephemeral=True)
-        else:
-            logger.error(f"Error pada cog ServerCreator: {error}", exc_info=True)
 
 async def setup(bot: commands.Bot):
     await bot.add_cog(ServerCreatorCog(bot))
