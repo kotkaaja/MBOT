@@ -113,6 +113,7 @@ Script:
 {code_snippet}
 ```
 
+
 Format JSON:
 {{
     "script_purpose": "Fungsi konkret script: aimbot/ESP/overlay/keylogger/obfuscated-malware/dll (maks 150 char)",
@@ -402,7 +403,7 @@ class ScannerCog(commands.Cog, name="Scanner"):
         return issues, summary, analyst, results
 
     async def _process_analysis(self, ctx, attachment: discord.Attachment = None, choice: str = "auto", url: str = None):
-        if not await self._check_limits(ctx, "scan"): return
+        if not self._check_limits(ctx, "scan"): return
         
         await self.processing_queue.put(ctx.author.id)
         loading_msg = None
@@ -445,20 +446,31 @@ class ScannerCog(commands.Cog, name="Scanner"):
             if download_path and os.path.exists(download_path): os.remove(download_path)
             if os.path.exists(extract_folder): shutil.rmtree(extract_folder)
 
-    async def _check_limits(self, ctx, command_name: str) -> bool:
+    def _check_limits(self, ctx, command_name: str) -> bool:
         can_proceed, cooldown = check_user_cooldown(ctx.author.id, command_name, self.config.COMMAND_COOLDOWN_SECONDS)
-        if not can_proceed: await ctx.send(f"⏳ Cooldown, tunggu {cooldown} detik lagi."); return False
+        if not can_proceed:
+            # Hanya kirim pesan jika ini adalah perintah, bukan auto-scan
+            if ctx.message.content.startswith(self.bot.command_prefix):
+                asyncio.create_task(ctx.send(f"⏳ Cooldown, tunggu {cooldown} detik lagi."))
+            return False
         
-        if command_name == "scan" and not await check_daily_limit(ctx.author.id, self.config.DAILY_LIMIT_PER_USER):
-            await ctx.send(f"❌ Batas harian ({self.config.DAILY_LIMIT_PER_USER}) tercapai."); return False
+        # --- PERBAIKAN DI SINI ---
+        # Menghapus 'await' karena check_daily_limit adalah fungsi sinkron
+        if command_name == "scan" and not check_daily_limit(ctx.author.id, self.config.DAILY_LIMIT_PER_USER):
+            # Hanya kirim pesan jika ini adalah perintah, bukan auto-scan
+            if ctx.message.content.startswith(self.bot.command_prefix):
+                 asyncio.create_task(ctx.send(f"❌ Batas harian ({self.config.DAILY_LIMIT_PER_USER}) tercapai."))
+            return False
         
         if self.config.ALLOWED_CHANNEL_IDS and ctx.channel.id not in self.config.ALLOWED_CHANNEL_IDS:
-            # Silent fail for auto-scan, notify for commands
             if ctx.message.content.startswith(self.bot.command_prefix):
-                await ctx.send("❌ Perintah ini tidak diizinkan di channel ini.", delete_after=10)
+                asyncio.create_task(ctx.send("❌ Perintah ini tidak diizinkan di channel ini.", delete_after=10))
             return False
 
-        if self.processing_queue.full(): await ctx.send("⏳ Server sibuk, coba lagi nanti."); return False
+        if self.processing_queue.full():
+            if ctx.message.content.startswith(self.bot.command_prefix):
+                asyncio.create_task(ctx.send("⏳ Server sibuk, coba lagi nanti."))
+            return False
         return True
 
     async def _get_file_source(self, ctx, attachment, url) -> Tuple[bytes, str]:
@@ -550,7 +562,7 @@ class ScannerCog(commands.Cog, name="Scanner"):
     @commands.command(name="history")
     async def history_command(self, ctx, limit: int = 5):
         """Melihat riwayat scan Anda."""
-        if not await self._check_limits(ctx, "history"): return
+        if not self._check_limits(ctx, "history"): return
         limit = min(max(1, limit), 20)
         
         try:
@@ -573,19 +585,20 @@ class ScannerCog(commands.Cog, name="Scanner"):
     @commands.command(name="stats")
     async def stats_command(self, ctx):
         """Melihat statistik bot dan penggunaan Anda."""
-        if not await self._check_limits(ctx, "stats"): return
+        if not self._check_limits(ctx, "stats"): return
         
         embed = discord.Embed(title="📊 Statistik Bot Scanner", color=0x3498db)
         
         # User Stats from DB
         try:
-            conn = sqlite3.connect(DB_FILE)
+            # Menggunakan database dari utils/database.py yang memakai postgres
+            conn = self.bot.get_cog("Scanner").get_db_connection() # asumsikan ada method get_db_connection
             cursor = conn.cursor()
-            cursor.execute("SELECT count FROM daily_usage WHERE user_id = ? AND date = ?", (ctx.author.id, datetime.now().strftime('%Y-%m-%d')))
+            cursor.execute("SELECT count FROM daily_usage WHERE user_id = %s AND date = %s", (ctx.author.id, datetime.now().strftime('%Y-%m-%d')))
             user_daily = cursor.fetchone()
-            cursor.execute("SELECT COUNT(*) FROM scan_history WHERE user_id = ?", (ctx.author.id,))
+            cursor.execute("SELECT COUNT(*) FROM scan_history WHERE user_id = %s", (ctx.author.id,))
             user_total = cursor.fetchone()
-            conn.close()
+            # tidak menutup koneksi karena global
             user_daily_count = user_daily[0] if user_daily else 0
             user_total_count = user_total[0] if user_total else 0
         except Exception as e:
