@@ -15,19 +15,30 @@ class GeneralCog(commands.Cog, name="General"):
         )
 
         embed.add_field(
-            name="🤖 Fitur Character Story (`!setupcs`)",
+            name="📝 Fitur Character Story (`!setupcs`)",
             value=(
-                "Gunakan perintah `!setupcs` untuk mengirim panel interaktif pembuatan *character story* (CS) berbasis AI.\n\n"
+                "Gunakan `!setupcs` untuk mengirim panel interaktif pembuatan *character story* (CS) berbasis AI.\n\n"
                 "**Alur Penggunaan:**\n"
                 "1. Tekan tombol 'Buat Character Story'.\n"
-                "2. Pilih server tujuan (SSRP, Virtual RP, AARP, GCRP).\n"
-                "3. Pilih sisi cerita (Baik/Jahat).\n"
-                "4. Isi formulir detail karakter dalam 2 tahap.\n"
-                "5. Bot akan menghasilkan cerita dan mengirimnya ke channel."
+                "2. Pilih server, sisi cerita, dan isi detail karakter.\n"
+                "3. Bot akan menghasilkan cerita dalam format file `.txt`.\n"
+                "**Catatan:** Terdapat cooldown 1 kali pembuatan per hari per pengguna."
             ),
             inline=False
         )
 
+        embed.add_field(
+            name="🛠️ Fitur AI Server Creator (`!createserver`)",
+            value=(
+                "Rancang dan buat struktur kategori & channel baru untuk server Anda menggunakan AI.\n\n"
+                "**Cara Penggunaan:**\n"
+                "`!createserver [deskripsi singkat server Anda]`\n"
+                "*Contoh: `!createserver Server untuk tim gaming Valorant`*\n"
+                "**Syarat:** Anda harus memiliki izin `Manage Channels`."
+            ),
+            inline=False
+        )
+        
         embed.add_field(
             name="🛡️ Fitur Scanner File (`!scan`)",
             value=(
