@@ -4,6 +4,10 @@ from discord import ui
 from openai import AsyncOpenAI
 import logging
 from typing import Dict
+import io
+
+# Import fungsi database untuk cooldown
+from utils.database import check_char_story_cooldown, set_char_story_cooldown
 
 # Mengambil logger
 logger = logging.getLogger(__name__)
@@ -21,7 +25,7 @@ SERVER_CONFIG = {
 - Tulis tanggal lahir dalam format 'DD Bulan YYYY'.
 - Gunakan huruf kapital hanya pada nama orang, nama tempat, dan awal kalimat.
 - Gunakan Bahasa Indonesia yang baku dan sesuai KBBI.
-- Jangan gunakan garis bawah (_) pada nama karakter dalam cerita.
+- Jangan gunakan garis bawah (_) pada nama karakter dalam cerita. Contoh salah: Muriel_Bagge, contoh benar: Muriel Bagge.
 - Pastikan penggunaan tanda baca (titik dan koma) tepat.""",
         "format": """**__FORMAT REQUEST CS | SSRP__**
 - Nama karakter : {nama_char}
@@ -42,6 +46,7 @@ STORY :
 - Gunakan Bahasa Indonesia yang baku dan sesuai KBBI.
 - Perhatikan penggunaan huruf kapital dan tanda baca (beri spasi setelah titik/koma).
 - Jangan menyalin story orang lain.
+- Jangan gunakan garis bawah (_) pada nama karakter dalam cerita. Contoh salah: Muriel_Bagge, contoh benar: Muriel Bagge.
 - Tulis tanggal lahir dalam format 'DD Bulan YYYY'.""",
         "format": """**__FORMAT CHARACTER STORY__**
 > NAMA UCP : (Isi manual)
@@ -58,6 +63,7 @@ STORY :
     "aarp": {
         "name": "AARP",
         "rules": """- Gunakan Bahasa Indonesia yang baku.
+- Jangan gunakan garis bawah (_) pada nama karakter dalam cerita. Contoh salah: Muriel_Bagge, contoh benar: Muriel Bagge.
 - Cerita minimal 1 paragraf atau lebih, singkat dan jelas.""",
         "format": """**__[Format Character Story]__**
 - Nama [ IC ] : {nama_char}
@@ -70,14 +76,13 @@ Story :
 
 {story}"""
     },
-    # ... (konfigurasi server lain)
     "gcrp": {
         "name": "GCRP",
         "rules": """- Minimal 4 paragraf dan setiap paragraf minimal memiliki 4 baris.
 - Menggunakan bahasa Indonesia yang baku.
 - Alur cerita yang jelas dan tidak berbelit-belit.
 - Dilarang keras menjiplak/copy paste cerita orang lain.
-- Penulisan nama karakter tidak menggunakan garis bawah (_).""",
+- Penulisan nama karakter tidak menggunakan garis bawah (_). Contoh salah: Muriel_Bagge, contoh benar: Muriel Bagge.""",
         "format": """**[GCRP] FORMAT CHARACTER STORY**
 * Nama UCP: (Isi Manual)
 * Nama Character: {nama_char}
@@ -107,8 +112,11 @@ class CSInputModal_Part2(ui.Modal):
         self.part1_data = part1_data
 
     async def on_submit(self, interaction: discord.Interaction):
-        # Defer secara publik agar pengguna tahu bot sedang bekerja
+        # Tampilkan status "thinking" secara publik
         await interaction.response.defer()
+        
+        # Kirim pesan bahwa proses sedang berjalan
+        processing_msg = await interaction.followup.send(f"⏳ Character Story untuk **{self.part1_data['nama_char']}** sedang diproses oleh AI...")
 
         try:
             # Gabungkan data dari formulir bagian 1 dan 2
@@ -137,29 +145,34 @@ class CSInputModal_Part2(ui.Modal):
 
             # Buat embed untuk hasil
             embed = discord.Embed(
-                title=f"📝 Character Story untuk {all_data['nama_char']}",
-                description="Berikut draf cerita yang dihasilkan AI. Salin dan lengkapi bagian yang diperlukan.",
-                color=discord.Color.blue()
+                title=f"✅ Character Story Selesai: {all_data['nama_char']}",
+                description="Cerita Anda telah berhasil dibuat. Silakan unduh file `.txt` di bawah ini dan lengkapi bagian yang diperlukan.",
+                color=discord.Color.green()
             )
             embed.add_field(name="Server", value=SERVER_CONFIG[self.server]['name'], inline=True)
             embed.add_field(name="Sisi Cerita", value=self.story_type.replace("_", " ").title(), inline=True)
             embed.set_footer(text=f"Diminta oleh: {interaction.user.display_name}")
 
-            # Kirim hasil secara publik
-            content_message = f"Character Story untuk **{all_data['nama_char']}**, diminta oleh {interaction.user.mention}:"
+            # Buat file .txt dalam memori
+            story_file = discord.File(
+                io.StringIO(final_cs),
+                filename=f"CS_{all_data['nama_char'].replace(' ', '_')}.txt"
+            )
+
+            # Edit pesan proses dengan hasil akhir (embed + file)
+            await processing_msg.edit(
+                content=f"Character Story untuk **{all_data['nama_char']}**, diminta oleh {interaction.user.mention}:",
+                embed=embed,
+                attachments=[story_file]
+            )
             
-            if len(final_cs) > 1900:
-                await interaction.followup.send(content=content_message, embed=embed)
-                for i in range(0, len(final_cs), 1900):
-                    chunk = final_cs[i:i+1900]
-                    await interaction.followup.send(f"```\n{chunk}\n```")
-            else:
-                await interaction.followup.send(content=content_message, embed=embed)
-                await interaction.followup.send(f"```\n{final_cs}\n```")
+            # Atur cooldown harian setelah berhasil membuat
+            set_char_story_cooldown(interaction.user.id)
 
         except Exception as e:
             logger.error(f"Gagal membuat CS dengan OpenAI: {e}", exc_info=True)
-            await interaction.followup.send("❌ Terjadi kesalahan saat menghubungi AI OpenAI. Pastikan API Key valid dan memiliki kuota.")
+            error_msg = "❌ Terjadi kesalahan saat menghubungi AI. Pastikan API Key valid dan memiliki kuota."
+            await processing_msg.edit(content=error_msg, embed=None, view=None, attachments=[])
 
 # View untuk tombol Lanjutkan ke Bagian 2
 class ContinueToPart2View(ui.View):
@@ -199,7 +212,8 @@ class CSInputModal_Part1(ui.Modal):
 
     async def on_submit(self, interaction: discord.Interaction):
         part1_data = {
-            "nama_char": self.nama_char.value,
+            # Langsung bersihkan nama dari underscore
+            "nama_char": self.nama_char.value.replace('_', ' '),
             "level": self.level.value,
             "jenis_kelamin": self.jenis_kelamin.value,
             "tanggal_lahir": self.tanggal_lahir.value,
@@ -262,6 +276,14 @@ class CSPanelView(ui.View):
 
     @ui.button(label="Buat Character Story", style=discord.ButtonStyle.primary, emoji="📝", custom_id="create_cs_button")
     async def create_cs(self, interaction: discord.Interaction, button: ui.Button):
+        # Cek cooldown sebelum memulai proses
+        if not check_char_story_cooldown(interaction.user.id):
+            await interaction.response.send_message(
+                "❌ Anda sudah membuat satu Character Story hari ini. Silakan coba lagi besok.",
+                ephemeral=True
+            )
+            return
+            
         await interaction.response.send_message("Pilih server di mana karaktermu akan bermain:", view=ServerSelectionView(self.bot), ephemeral=True)
 
 # ============================
@@ -312,6 +334,7 @@ class CharacterStoryCog(commands.Cog, name="CharacterStory"):
 
         Instruksi Spesifik (SANGAT PENTING):
         -   **Gaya Penulisan:** Gunakan sudut pandang orang ketiga (third-person point of view). Sebut karakter dengan namanya ({nama_char}), hindari kata 'aku' atau 'saya'.
+        -   **Penulisan Nama:** Jangan pernah gunakan garis bawah (_) pada nama karakter. Tulis nama seperti nama orang pada umumnya (contoh: Muriel Bagge).
         -   **Kultur:** Cerita harus terasa seperti berlatar di Amerika. Jika kultur/etnis spesifik diberikan, integrasikan secara halus (misalnya, melalui nama, tradisi, lingkungan). Jika tidak, gunakan nuansa kultur Amerika pada umumnya.
         -   **Arah Cerita:** {story_direction}
         -   **Integrasi Bakat:** Jadikan bakat '{bakat}' sebagai pilar utama dalam alur cerita.
@@ -357,4 +380,3 @@ async def setup(bot):
     if not hasattr(bot, 'persistent_views_added'):
         bot.persistent_views_added = False
     await bot.add_cog(CharacterStoryCog(bot))
-
