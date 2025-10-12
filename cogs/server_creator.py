@@ -11,6 +11,16 @@ from openai import AsyncOpenAI
 logger = logging.getLogger(__name__)
 
 # =================================================================================
+# CUSTOM CHECK
+# =================================================================================
+
+def is_guild_owner():
+    """Custom check untuk memverifikasi apakah pengguna adalah pemilik server."""
+    async def predicate(ctx: commands.Context) -> bool:
+        return ctx.author == ctx.guild.owner
+    return commands.check(predicate)
+
+# =================================================================================
 # PROMPT ENGINEERING UNTUK OPENAI
 # =================================================================================
 
@@ -259,7 +269,7 @@ class ServerCreatorCog(commands.Cog, name="ServerCreator"):
         return json.loads(response.choices[0].message.content)
 
     @commands.command(name="createserver", help="Membuat struktur server lengkap menggunakan proposal AI.")
-    @commands.is_guild_owner()
+    @is_guild_owner()
     @commands.cooldown(1, 120, commands.BucketType.user)
     async def create_server(self, ctx: commands.Context, *, deskripsi: str, existing_message: Optional[discord.Message] = None):
         message_handler = existing_message or ctx
@@ -278,7 +288,7 @@ class ServerCreatorCog(commands.Cog, name="ServerCreator"):
             await message_handler.edit(content=f"❌ Terjadi kesalahan saat berkomunikasi dengan AI: {e}")
 
     @commands.command(name="createcategory", help="Membuat satu kategori interaktif menggunakan proposal AI.")
-    @commands.is_guild_owner()
+    @is_guild_owner()
     @commands.cooldown(1, 60, commands.BucketType.user)
     async def create_category(self, ctx: commands.Context, *, deskripsi: str, existing_message: Optional[discord.Message] = None):
         message_handler = existing_message or ctx
@@ -297,7 +307,7 @@ class ServerCreatorCog(commands.Cog, name="ServerCreator"):
             await message_handler.edit(content=f"❌ Terjadi kesalahan saat berkomunikasi dengan AI: {e}")
 
     @commands.command(name="deletecategory", help="Menghapus kategori dan semua isinya.")
-    @commands.is_guild_owner()
+    @is_guild_owner()
     async def delete_category(self, ctx: commands.Context, *, category_name: str):
         category = discord.utils.get(ctx.guild.categories, name=category_name)
         if not category: return await ctx.send(f"⚠️ Kategori `{category_name}` tidak ditemukan.")
@@ -333,7 +343,7 @@ class ServerCreatorCog(commands.Cog, name="ServerCreator"):
 
     async def cog_command_error(self, ctx: commands.Context, error: commands.CommandError):
         # Error handler umum
-        if isinstance(error, commands.MissingPermissions) or isinstance(error, commands.NotGuildOwner):
+        if isinstance(error, commands.CheckFailure):
             await ctx.send(f"❌ Perintah ini hanya untuk pemilik server.", ephemeral=True)
         elif isinstance(error, commands.CommandOnCooldown):
             await ctx.send(f"⏳ Cooldown. Coba lagi dalam **{error.retry_after:.1f} detik**.", ephemeral=True)
