@@ -144,6 +144,28 @@ class CSInputModal_Part2(ui.Modal):
             logger.error(f"Gagal membuat CS dengan OpenAI: {e}", exc_info=True)
             await interaction.followup.send("❌ Terjadi kesalahan saat menghubungi AI OpenAI. Pastikan API Key valid dan memiliki kuota.")
 
+# View untuk tombol Lanjutkan ke Bagian 2
+class ContinueToPart2View(ui.View):
+    def __init__(self, server: str, story_type: str, bot_instance, part1_data: Dict):
+        super().__init__(timeout=300) # 5 menit timeout
+        self.server = server
+        self.story_type = story_type
+        self.bot = bot_instance
+        self.part1_data = part1_data
+
+    @ui.button(label="Lanjutkan ke Detail Cerita (2/2)", style=discord.ButtonStyle.primary, emoji="➡️")
+    async def continue_button(self, interaction: discord.Interaction, button: ui.Button):
+        # Tombol ini membuat interaksi baru, jadi kita bisa mengirim modal
+        await interaction.response.send_modal(CSInputModal_Part2(
+            server=self.server,
+            story_type=self.story_type,
+            bot_instance=self.bot,
+            part1_data=self.part1_data
+        ))
+        # Hapus view setelah diklik agar tidak bisa digunakan lagi
+        await interaction.message.edit(view=None)
+        self.stop()
+
 # Modal Bagian 1: Mengumpulkan data dasar karakter
 class CSInputModal_Part1(ui.Modal):
     nama_char = ui.TextInput(label="Nama Lengkap Karakter (IC)", placeholder="Contoh: John Washington, Kenji Tanaka", style=discord.TextStyle.short, required=True)
@@ -166,8 +188,18 @@ class CSInputModal_Part1(ui.Modal):
             "tanggal_lahir": self.tanggal_lahir.value,
             "kota_asal": self.kota_asal.value,
         }
-        # Tampilkan modal kedua setelah yang pertama di-submit
-        await interaction.response.send_modal(CSInputModal_Part2(server=self.server, story_type=self.story_type, bot_instance=self.bot, part1_data=part1_data))
+        # Kirim pesan dengan tombol untuk membuka modal kedua
+        view = ContinueToPart2View(
+            server=self.server,
+            story_type=self.story_type,
+            bot_instance=self.bot,
+            part1_data=part1_data
+        )
+        await interaction.response.send_message(
+            "✅ Detail dasar berhasil disimpan. Tekan tombol di bawah untuk melanjutkan.",
+            view=view,
+            ephemeral=True
+        )
 
 
 # View untuk memilih tipe cerita (Goodside/Badside)
