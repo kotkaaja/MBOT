@@ -40,7 +40,14 @@ class GeneralCog(commands.Cog, name="General"):
             ),
             inline=False
         )
-
+        embed.add_field(
+            name="🎵 Fitur MP3 Converter",
+            value=(
+                "• `!convert [link]` - Konversi link YT/TikTok/Spotify.\n"
+                "• `!setuploadchannel [#channel]` - **(Admin)** Atur channel unggah."
+            ),
+            inline=False
+        )
         # Penjelasan Fitur Scanner
         embed.add_field(
             name="🛡️ Fitur Scanner File",
