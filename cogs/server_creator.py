@@ -315,16 +315,31 @@ class ServerCreatorCog(commands.Cog, name="ServerCreator"):
         if view.confirmed:
             processing_msg = await ctx.send(f"⏳ Menghapus kategori `{category_name}`...")
             try:
-                # Hapus semua channel di dalam kategori terlebih dahulu
-                for channel in category_to_delete.channels:
+                # Buat salinan daftar channel karena koleksi aslinya akan berubah saat iterasi
+                channels_to_delete = list(category_to_delete.channels)
+                for channel in channels_to_delete:
                     await channel.delete(reason=f"Bagian dari penghapusan kategori oleh {ctx.author}")
                     await asyncio.sleep(0.5)
                 
                 # Hapus kategori itu sendiri
                 await category_to_delete.delete(reason=f"Dihapus oleh {ctx.author}")
+
+                # Setelah selesai, edit pesan asli.
                 await processing_msg.edit(content=f"✅ Kategori `{category_name}` dan semua isinya berhasil dihapus.")
+            
+            except discord.errors.NotFound:
+                # Ini terjadi jika channel tempat pesan dikirim telah dihapus.
+                # Kita tidak bisa mengedit pesan lagi, jadi kita log saja dan tidak melakukan apa-apa.
+                logger.info(f"Berhasil menghapus kategori '{category_name}', tetapi tidak dapat mengirim konfirmasi karena channel asal sudah dihapus.")
+                
             except Exception as e:
-                await processing_msg.edit(content=f"❌ Terjadi kesalahan saat menghapus: {e}")
+                logger.error(f"Terjadi kesalahan saat menghapus kategori {category_name}: {e}", exc_info=True)
+                # Coba edit pesan asli dengan pesan error.
+                try:
+                    await processing_msg.edit(content=f"❌ Terjadi kesalahan saat menghapus: {e}")
+                except discord.errors.NotFound:
+                    # Jika channel asli sudah tidak ada, kita tidak bisa melakukan apa-apa.
+                    logger.warning(f"Tidak dapat mengirim pesan error untuk penghapusan '{category_name}' karena channel asal sudah dihapus.")
         else:
             await ctx.send("Penghapusan kategori dibatalkan.", delete_after=10)
 
@@ -341,3 +356,4 @@ class ServerCreatorCog(commands.Cog, name="ServerCreator"):
 
 async def setup(bot: commands.Bot):
     await bot.add_cog(ServerCreatorCog(bot))
+
