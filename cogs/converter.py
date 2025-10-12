@@ -24,7 +24,7 @@ class ConverterCog(commands.Cog, name="Converter"):
                     data.add_field('file_1_', f, filename=os.path.basename(file_path))
                     data.add_field('submitr', '[ رفع الملفات ]')
                     
-                    async with session.post('https://top4top.io/uploadfile', data=data) as resp:
+                    async with session.post('[https://top4top.io/uploadfile](https://top4top.io/uploadfile)', data=data) as resp:
                         if resp.status == 200:
                             text = await resp.text()
                             import re
@@ -49,7 +49,7 @@ class ConverterCog(commands.Cog, name="Converter"):
                     data = aiohttp.FormData()
                     data.add_field('file', f, filename=os.path.basename(file_path))
                     
-                    async with session.post('https://0x0.st', data=data) as resp:
+                    async with session.post('[https://0x0.st](https://0x0.st)', data=data) as resp:
                         if resp.status == 200:
                             return (await resp.text()).strip()
         except Exception as e:
@@ -64,7 +64,7 @@ class ConverterCog(commands.Cog, name="Converter"):
                     data = aiohttp.FormData()
                     data.add_field('file', f, filename=os.path.basename(file_path))
                     
-                    async with session.post('https://file.io', data=data) as resp:
+                    async with session.post('[https://file.io](https://file.io)', data=data) as resp:
                         if resp.status == 200:
                             result = await resp.json()
                             if result.get('success'):
@@ -109,6 +109,10 @@ class ConverterCog(commands.Cog, name="Converter"):
             'outtmpl': f'temp/{ctx.message.id}',
             'quiet': True,
             'no_warnings': True,
+            # NOTE UNTUK PENGEMBANG: Jika error "Sign in to confirm you're not a bot" terjadi,
+            # kemungkinan IP server diblokir oleh YouTube. Solusinya adalah menggunakan cookies.
+            # Tambahkan baris berikut di bawah ini setelah mengekspor cookies dari browser Anda.
+            # 'cookiefile': 'path/to/your/cookies.txt',
         }
         
         filename = None
@@ -119,7 +123,7 @@ class ConverterCog(commands.Cog, name="Converter"):
             
             filename = f"temp/{ctx.message.id}.mp3"
             if not os.path.exists(filename):
-                return await msg.edit(content="❌ File tidak ditemukan.")
+                return await msg.edit(content="❌ File tidak ditemukan setelah proses download.")
 
             title = info.get('title', 'Unknown')
             size_mb = os.path.getsize(filename) / (1024 * 1024)
@@ -148,6 +152,14 @@ class ConverterCog(commands.Cog, name="Converter"):
             await upload_channel.send(f"🎵 **{title}**\n{link}\n\nDiminta: {ctx.author.mention} | Host: {host}")
             await msg.edit(content=f"✅ Link dikirim ke {upload_channel.mention}")
 
+        except yt_dlp.utils.DownloadError as e:
+            logger.error(f"Convert DownloadError: {e}")
+            # --- PERBAIKAN DI SINI ---
+            # Memberikan pesan yang lebih spesifik jika error karena blokir YouTube
+            if "confirm you’re not a bot" in str(e):
+                await msg.edit(content="❌ Gagal mengunduh. YouTube mungkin memblokir server ini. Coba lagi nanti atau gunakan link dari sumber lain.")
+            else:
+                await msg.edit(content=f"❌ Gagal mengunduh video. Pastikan link valid.")
         except Exception as e:
             logger.error(f"Convert error: {e}")
             await msg.edit(content=f"❌ Error: {str(e)[:100]}")
