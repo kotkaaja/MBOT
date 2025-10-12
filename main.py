@@ -79,7 +79,7 @@ bot = MyBot(command_prefix='!', intents=intents, help_command=None)
 # ============================
 async def load_cogs():
     """Memuat semua fitur (Cogs) dari direktori cogs."""
-    cogs_to_load = ['scanner', 'char_story']
+    cogs_to_load = ['scanner', 'char_story','general']
     for cog_name in cogs_to_load:
         try:
             await bot.load_extension(f'cogs.{cog_name}')
