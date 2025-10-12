@@ -38,6 +38,14 @@ def init_database():
                 PRIMARY KEY (user_id, date)
             )
         ''')
+
+        # Tabel untuk cooldown harian fitur Character Story
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS char_story_cooldown (
+                user_id INTEGER PRIMARY KEY,
+                last_used_date TEXT NOT NULL
+            )
+        ''')
         
         conn.commit()
         conn.close()
@@ -99,3 +107,36 @@ def save_scan_history(user_id: int, filename: str, file_hash: str, danger_level:
     except Exception as e:
         logger.error(f"Gagal menyimpan riwayat scan untuk file {filename}", exc_info=e)
 
+def check_char_story_cooldown(user_id: int) -> bool:
+    """
+    Memeriksa apakah pengguna bisa membuat Character Story.
+    Mengembalikan True jika bisa, False jika dalam cooldown (sudah membuat hari ini).
+    """
+    today = datetime.now().strftime('%Y-%m-%d')
+    try:
+        conn = sqlite3.connect(DB_FILE)
+        cursor = conn.cursor()
+        cursor.execute('SELECT last_used_date FROM char_story_cooldown WHERE user_id = ?', (user_id,))
+        result = cursor.fetchone()
+        conn.close()
+        
+        if result and result[0] == today:
+            logger.info(f"User {user_id} on char_story cooldown.")
+            return False # Sudah pakai hari ini
+        return True # Belum pakai atau pakai kemarin
+    except Exception as e:
+        logger.error(f"Gagal memeriksa cooldown char_story untuk user {user_id}", exc_info=e)
+        return False # Anggap cooldown jika error
+
+def set_char_story_cooldown(user_id: int):
+    """Mencatat bahwa pengguna telah menggunakan fitur Character Story hari ini."""
+    today = datetime.now().strftime('%Y-%m-%d')
+    try:
+        conn = sqlite3.connect(DB_FILE)
+        cursor = conn.cursor()
+        cursor.execute('INSERT OR REPLACE INTO char_story_cooldown (user_id, last_used_date) VALUES (?, ?)', (user_id, today))
+        conn.commit()
+        conn.close()
+        logger.info(f"Cooldown char_story diatur untuk user {user_id} pada {today}.")
+    except Exception as e:
+        logger.error(f"Gagal mengatur cooldown char_story untuk user {user_id}", exc_info=e)
