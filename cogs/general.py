@@ -9,60 +9,55 @@ class GeneralCog(commands.Cog, name="General"):
     async def help_command(self, ctx):
         """Menampilkan pesan bantuan untuk semua fitur bot."""
         embed = discord.Embed(
-            title="Bantuan Perintah MBOT",
+            title="Bantuan Perintah KotkaHelper",
             description="Berikut adalah daftar semua fitur yang tersedia di bot ini.",
-            color=0x0099ff
+            color=0x5865F2 # Warna biru Discord
         )
+        embed.set_thumbnail(url=self.bot.user.display_avatar.url)
 
+        # Penjelasan Fitur AI Server Builder
         embed.add_field(
-            name="📝 Fitur Character Story (`!setupcs`)",
+            name="🤖 Fitur AI Server Builder (Admin Only)",
             value=(
-                "Gunakan `!setupcs` untuk mengirim panel interaktif pembuatan *character story* (CS) berbasis AI.\n\n"
-                "**Alur Penggunaan:**\n"
-                "1. Tekan tombol 'Buat Character Story'.\n"
-                "2. Pilih server, sisi cerita, dan isi detail karakter.\n"
-                "3. Bot akan menghasilkan cerita dalam format file `.txt`.\n"
-                "**Catatan:** Terdapat cooldown 1 kali pembuatan per hari per pengguna."
-            ),
-            inline=False
-        )
-
-        embed.add_field(
-            name="🛠️ Fitur AI Server Creator (`!createserver`)",
-            value=(
-                "Rancang dan buat struktur kategori & channel baru untuk server Anda menggunakan AI.\n\n"
-                "**Cara Penggunaan:**\n"
-                "`!createserver [deskripsi singkat server Anda]`\n"
-                "*Contoh: `!createserver Server untuk tim gaming Valorant`*\n"
-                "**Syarat:** Anda harus memiliki izin `Manage Channels`."
+                "Rancang struktur server atau kategori secara dinamis menggunakan AI dan UI yang interaktif.\n\n"
+                "**Perintah Utama:**\n"
+                "• `!createserver [deskripsi]`\n"
+                "  Meminta proposal struktur server lengkap dari AI. Anda bisa memilih channel, mengaktifkan/menonaktifkan pembuatan role, dan meminta proposal baru jika tidak suka.\n\n"
+                "• `!createcategory [deskripsi]`\n"
+                "  Meminta proposal satu kategori dari AI, lengkap dengan pilihan channel interaktif dan opsi proposal baru.\n\n"
+                "• `!deletecategory [nama kategori]`\n"
+                "  Menghapus kategori beserta semua channel di dalamnya dengan konfirmasi."
             ),
             inline=False
         )
         
+        # Penjelasan Fitur Character Story
         embed.add_field(
-            name="🛡️ Fitur Scanner File (`!scan`)",
+            name="📝 Fitur Character Story",
             value=(
-                "Fitur ini menganalisis file (`.lua`, `.txt`, `.zip`, dll.) untuk mendeteksi kode berbahaya.\n\n"
-                "**Cara Penggunaan:**\n"
-                "- **Scan Otomatis:** Cukup unggah file ke channel.\n"
-                "- **Scan Manual:** Gunakan `!scan [url_file]` atau `!scan` lalu unggah file.\n"
-                "- **Pilih Analyst:** `!scan [analyst] [url]`. Pilihan: `auto`, `gemini`, `openai`, `manual`."
-            ),
-            inline=False
-        )
-        
-        embed.add_field(
-            name="📊 Perintah Lainnya",
-            value=(
-                "- `!history [jumlah]`: Melihat riwayat scan Anda.\n"
-                "- `!stats`: Melihat statistik penggunaan bot."
+                "Gunakan `!setupcs` untuk mengirim panel interaktif pembuatan *character story* (CS) berbasis AI. "
+                "Terdapat cooldown 1 kali pembuatan per hari."
             ),
             inline=False
         )
 
-        embed.set_footer(text="Dibuat oleh Kotkaaja")
+        # Penjelasan Fitur Scanner
+        embed.add_field(
+            name="🛡️ Fitur Scanner File",
+            value=(
+                "Analisis file (`.lua`, `.zip`, dll.) untuk mendeteksi kode berbahaya secara otomatis saat diunggah atau dengan perintah.\n\n"
+                "**Perintah Lainnya:**\n"
+                "• `!scan [url]`: Scan file dari URL.\n"
+                "• `!history`: Lihat riwayat scan Anda.\n"
+                "• `!stats`: Lihat statistik penggunaan bot."
+            ),
+            inline=False
+        )
+
+        embed.set_footer(text=f"Dijalankan oleh {self.bot.user.name} | Dibuat oleh Kotkaaja")
 
         await ctx.send(embed=embed)
 
 async def setup(bot):
     await bot.add_cog(GeneralCog(bot))
+
