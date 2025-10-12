@@ -1,167 +1,343 @@
 import discord
 from discord.ext import commands
-from discord import ui
-import json
-from openai import AsyncOpenAI
+from discord import ui, app_commands
+import random
+import asyncio
 import logging
+from typing import List, Dict, Any
 
 # Mengambil logger
 logger = logging.getLogger(__name__)
 
-# --- PROMPT ENGINEERING UNTUK AI ---
-SYSTEM_PROMPT = """
-Anda adalah seorang "Discord Architect AI", seorang asisten ahli dalam merancang struktur server Discord yang efisien.
-Tugas Anda adalah membaca deskripsi proyek dari pengguna dan mengubahnya menjadi proposal struktur kategori dan channel dalam format JSON yang ketat.
-
-ATURAN KETAT:
-1.  Output HARUS HANYA berupa JSON yang valid, tanpa teks penjelasan tambahan di luar blok JSON.
-2.  Struktur JSON harus mengikuti format ini:
-    {
-      "category_name": "NAMA_KATEGORI_YANG_DISARANKAN",
-      "channels": [
-        { "type": "text", "name": "nama-channel-teks-1" },
-        { "type": "voice", "name": "Nama Channel Suara 1" },
-        { "type": "forum", "name": "nama-forum-diskusi" }
-      ]
+# =================================================================================
+# TEMPLATE STRUKTUR SERVER UNTUK GTA/SAMP ROLEPLAY
+# =================================================================================
+# Anda bisa menambahkan lebih banyak template di sini dengan kunci yang berbeda.
+# Contoh: "valorant", "minecraft-smp", dll.
+SERVER_TEMPLATES: Dict[str, Dict[str, Any]] = {
+    "gta-roleplay": {
+        "name": "GTA V / SAMP Roleplay",
+        "description": "Template server yang dioptimalkan untuk komunitas roleplay.",
+        "categories": [
+            {
+                "name": "🏁║SELAMAT DATANG",
+                "channels": [
+                    {"type": "text", "name": "💬│obrolan-umum"},
+                    {"type": "text", "name": "📜│peraturan"},
+                    {"type": "text", "name": "📢│pengumuman"},
+                ]
+            },
+            {
+                "name": "📜║INFORMASI SERVER",
+                "channels": [
+                    {"type": "text", "name": "📚│panduan-roleplay"},
+                    {"type": "text", "name": "🗺️│peta-server"},
+                    {"type": "text", "name": "💼│lowongan-pekerjaan"},
+                ]
+            },
+            {
+                "name": "🎭║IC ZONE",
+                "channels": [
+                    {"type": "text", "name": "📱│social-media-ic"},
+                    {"type": "text", "name": "📰│berita-los-santos"},
+                    {"type": "voice", "name": "🎙️ Voice RP 1"},
+                    {"type": "voice", "name": "🎙️ Voice RP 2"},
+                ]
+            },
+            {
+                "name": "🔧║MODDING & SCRIPT",
+                "channels": [
+                    {"type": "text", "name": "📦│share-mod"},
+                    {"type": "text", "name": "💡│diskusi-script"},
+                    {"type": "forum", "name": "bantuan-teknis"},
+                ]
+            },
+            {
+                "name": "🎮║OOC (Out of Character)",
+                "channels": [
+                    {"type": "text", "name": "😂│meme-zone"},
+                    {"type": "text", "name": "📸│share-screenshot"},
+                    {"type": "voice", "name": "🎧 Voice Santai"},
+                ]
+            }
+        ],
+        "roles": [
+            {"name": "👑 Admin", "permissions": discord.Permissions(administrator=True), "color": discord.Color.red()},
+            {"name": "🛡️ Moderator", "permissions": discord.Permissions(manage_messages=True, kick_members=True, ban_members=True), "color": discord.Color.blue()},
+            {"name": "✅ Terverifikasi", "permissions": discord.Permissions.general(), "color": discord.Color.green()},
+            {"name": "🤖 Bot", "permissions": discord.Permissions.none(), "color": discord.Color.dark_grey()}
+        ]
     }
-3.  Nama kategori harus singkat, deskriptif, dan bisa menyertakan emoji yang relevan.
-4.  Nama channel TEKS dan FORUM harus ditulis dengan huruf kecil dan menggunakan tanda hubung (-).
-5.  Nama channel SUARA bisa menggunakan huruf besar dan spasi.
-6.  Setiap proyek harus memiliki satu channel teks umum dan satu channel suara.
-7.  Analisis deskripsi pengguna untuk membuat channel yang relevan dengan tim atau tugas.
-"""
+}
 
-# --- VIEW UNTUK TOMBOL KONFIRMASI ---
-class ConfirmationView(ui.View):
-    def __init__(self, author: discord.User, proposal_data: dict):
-        super().__init__(timeout=300)  # Tombol akan nonaktif setelah 5 menit
+# =================================================================================
+# UI COMPONENTS (VIEWS, SELECTS, MODALS)
+# =================================================================================
+
+class CategorySelect(ui.Select):
+    """Dropdown untuk memilih kategori yang akan dibuat."""
+    def __init__(self, categories: List[Dict[str, Any]]):
+        self.category_options = categories
+        options = [
+            discord.SelectOption(label=cat['name'], value=str(i), description=f"{len(cat['channels'])} channel di dalamnya.")
+            for i, cat in enumerate(categories)
+        ]
+        super().__init__(placeholder="Pilih kategori yang ingin dibuat...", min_values=1, max_values=len(options), options=options)
+
+    async def callback(self, interaction: discord.Interaction):
+        # Menyimpan pilihan di view untuk diakses nanti
+        self.view.selected_indices = self.values
+        await interaction.response.defer()
+
+class ServerBuilderView(ui.View):
+    """View utama yang menampilkan pilihan kategori dan tombol aksi."""
+    def __init__(self, author: discord.User, template: Dict[str, Any]):
+        super().__init__(timeout=300)
         self.author = author
-        self.proposal_data = proposal_data
+        self.template = template
+        self.selected_indices: List[str] = []
 
-    # Cek interaksi hanya dari pengguna asli
+        self.category_select = CategorySelect(template['categories'])
+        self.add_item(self.category_select)
+
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
         if interaction.user.id != self.author.id:
-            await interaction.response.send_message("Hanya pengguna yang meminta yang dapat menekan tombol ini.", ephemeral=True)
+            await interaction.response.send_message("Hanya pembuat permintaan yang dapat berinteraksi.", ephemeral=True)
             return False
         return True
 
-    @ui.button(label="Setuju & Buat", style=discord.ButtonStyle.green)
-    async def confirm_button(self, interaction: discord.Interaction, button: ui.Button):
-        # Nonaktifkan semua tombol setelah ditekan
+    async def _disable_all_items(self):
         for item in self.children:
             item.disabled = True
-        await interaction.response.edit_message(content="✅ Disetujui! Membangun struktur server...", view=self)
+
+    @ui.button(label="Bangun Server", style=discord.ButtonStyle.green, emoji="✅", row=1)
+    async def confirm(self, interaction: discord.Interaction, button: ui.Button):
+        if not self.selected_indices:
+            await interaction.response.send_message("Anda harus memilih setidaknya satu kategori.", ephemeral=True)
+            return
+
+        await self._disable_all_items()
+        await interaction.response.edit_message(content="⏳ Membangun struktur server... Ini mungkin memakan waktu beberapa saat.", view=self)
 
         guild = interaction.guild
-        try:
-            # 1. Buat Kategori
-            category_name = self.proposal_data.get("category_name", "Proyek Baru")
-            new_category = await guild.create_category(name=category_name)
+        log_messages = []
 
-            # 2. Buat semua channel di dalam kategori tersebut
-            for channel in self.proposal_data.get("channels", []):
-                ch_type = channel.get("type")
-                ch_name = channel.get("name")
-                if ch_type == "text":
-                    await new_category.create_text_channel(name=ch_name)
-                elif ch_type == "voice":
-                    await new_category.create_voice_channel(name=ch_name)
-                elif ch_type == "forum":
-                    await new_category.create_forum(name=ch_name)
+        # --- Proses Pembuatan Role ---
+        if self.template.get("roles"):
+            log_messages.append("**Membuat Roles...**")
+            existing_roles = {role.name: role for role in guild.roles}
+            for role_data in self.template["roles"]:
+                role_name = role_data["name"]
+                if role_name not in existing_roles:
+                    try:
+                        await guild.create_role(
+                            name=role_name,
+                            permissions=role_data.get("permissions", discord.Permissions.none()),
+                            color=role_data.get("color", discord.Color.default())
+                        )
+                        log_messages.append(f"✅ Role `{role_name}` berhasil dibuat.")
+                    except Exception as e:
+                        log_messages.append(f"❌ Gagal membuat role `{role_name}`: {e}")
+                else:
+                    log_messages.append(f"🟡 Role `{role_name}` sudah ada, dilewati.")
+            await asyncio.sleep(1) # Jeda untuk menghindari rate limit
+
+        # --- Proses Pembuatan Kategori dan Channel ---
+        log_messages.append("\n**Membangun Kategori & Channel...**")
+        for index_str in self.selected_indices:
+            index = int(index_str)
+            cat_data = self.template['categories'][index]
+            cat_name = cat_data['name']
             
-            await interaction.followup.send(f"Struktur untuk **{category_name}** berhasil dibuat!")
-
-        except Exception as e:
-            await interaction.followup.send(f"Gagal membuat struktur server. Kesalahan: {e}")
-
-    @ui.button(label="Batal", style=discord.ButtonStyle.red)
-    async def cancel_button(self, interaction: discord.Interaction, button: ui.Button):
-        # Nonaktifkan semua tombol setelah ditekan
-        for item in self.children:
-            item.disabled = True
-        await interaction.response.edit_message(content="❌ Dibatalkan. Tidak ada perubahan yang dibuat.", view=self)
-
-
-# --- KELAS COG UTAMA ---
-class ServerCreatorCog(commands.Cog, name="ServerCreator"):
-    def __init__(self, bot):
-        self.bot = bot
-        self.client = None
-        if self.bot.config.OPENAI_API_KEYS:
             try:
-                # Menggunakan API key dari config bot
-                self.client = AsyncOpenAI(api_key=self.bot.config.OPENAI_API_KEYS[0])
-                logger.info("✅ Model OpenAI untuk Server Creator berhasil diinisialisasi.")
+                # Buat kategori
+                new_category = await guild.create_category(name=cat_name)
+                log_messages.append(f"✅ Kategori `{cat_name}` berhasil dibuat.")
+
+                # Buat channel di dalamnya
+                for channel_data in cat_data['channels']:
+                    ch_name = channel_data['name']
+                    ch_type = channel_data['type']
+                    try:
+                        if ch_type == 'text':
+                            await new_category.create_text_channel(name=ch_name)
+                        elif ch_type == 'voice':
+                            await new_category.create_voice_channel(name=ch_name)
+                        elif ch_type == 'forum':
+                            await new_category.create_forum(name=ch_name)
+                        log_messages.append(f"  - Channel `{ch_name}` (`{ch_type}`) dibuat.")
+                    except Exception as e:
+                        log_messages.append(f"  - ❌ Gagal membuat channel `{ch_name}`: {e}")
+                    await asyncio.sleep(0.5) # Jeda kecil
             except Exception as e:
-                logger.error(f"❌ Gagal mengkonfigurasi OpenAI: {e}")
-        else:
-            logger.warning("⚠️ OPENAI_API_KEYS tidak ditemukan di .env, fitur Server Creator tidak akan berfungsi.")
-
-    @commands.command(name="createserver")
-    @commands.has_permissions(manage_channels=True)
-    @commands.cooldown(1, 60, commands.BucketType.user)
-    async def create_server_command(self, ctx, *, deskripsi_proyek: str):
-        """Rancang dan buat struktur kategori & channel baru menggunakan AI."""
-        if not self.client:
-            return await ctx.send("❌ Fitur ini tidak aktif karena API Key OpenAI tidak dikonfigurasi.")
+                log_messages.append(f"❌ Gagal membuat kategori `{cat_name}`: {e}")
         
-        msg = await ctx.send(f"🤖 AI sedang merancang struktur untuk proyek: *\"{deskripsi_proyek}\"*... mohon tunggu.")
+        log_messages.append("\n**Pembangunan Selesai!** 🎉")
+        
+        # Kirim log ke channel
+        log_content = "\n".join(log_messages)
+        embed = discord.Embed(title="Laporan Pembangunan Server", description=log_content, color=discord.Color.green())
+        await interaction.followup.send(embed=embed)
 
+
+    @ui.button(label="Batal", style=discord.ButtonStyle.red, emoji="❌", row=1)
+    async def cancel(self, interaction: discord.Interaction, button: ui.Button):
+        await self._disable_all_items()
+        await interaction.response.edit_message(content="Pembangunan server dibatalkan.", embed=None, view=self)
+
+    @ui.button(label="Refresh", style=discord.ButtonStyle.blurple, emoji="🔁", row=1)
+    async def refresh(self, interaction: discord.Interaction, button: ui.Button):
+        # Mengirim ulang view yang sama untuk mereset pilihan
+        new_view = ServerBuilderView(self.author, self.template)
+        embed = interaction.message.embeds[0]
+        await interaction.response.edit_message(content=interaction.message.content, embed=embed, view=new_view)
+
+# =================================================================================
+# KELAS COG UTAMA (SERVER CREATOR)
+# =================================================================================
+
+class ServerCreatorCog(commands.Cog, name="ServerCreator"):
+    def __init__(self, bot: commands.Bot):
+        self.bot = bot
+
+    @commands.command(name="createserver", help="Membuat struktur server lengkap dari template.")
+    @commands.has_permissions(administrator=True)
+    @commands.cooldown(1, 120, commands.BucketType.user)
+    async def create_server(self, ctx: commands.Context, template_name: str = "gta-roleplay"):
+        """
+        Memulai proses pembuatan server interaktif berdasarkan template.
+        Saat ini hanya template 'gta-roleplay' yang tersedia.
+        """
+        template = SERVER_TEMPLATES.get(template_name.lower())
+        if not template:
+            await ctx.send(f"❌ Template `{template_name}` tidak ditemukan. Template yang tersedia: `{', '.join(SERVER_TEMPLATES.keys())}`")
+            return
+
+        embed = discord.Embed(
+            title=f"🤖 AI Server Builder - Template: {template['name']}",
+            description=(
+                f"{template['description']}\n\n"
+                "**Langkah 1:** Pilih kategori yang ingin Anda buat dari menu dropdown di bawah.\n"
+                "**Langkah 2:** Tekan tombol 'Bangun Server' untuk memulai proses."
+            ),
+            color=0x5865F2
+        )
+        embed.set_footer(text="Anda dapat me-refresh pilihan atau membatalkan kapan saja.")
+
+        view = ServerBuilderView(ctx.author, template)
+        await ctx.send(embed=embed, view=view)
+
+    @commands.command(name="createcategory", help="Membuat satu kategori dengan channel dasar.")
+    @commands.has_permissions(manage_channels=True)
+    @commands.cooldown(1, 30, commands.BucketType.user)
+    async def create_category(self, ctx: commands.Context, *, category_name: str):
+        """
+        Membuat sebuah kategori baru beserta channel teks dan suara dasar.
+        Contoh: !createcategory  zona-event
+        """
+        msg = await ctx.send(f"⚙️ Membuat kategori `{category_name}`...")
         try:
-            # Mengirim permintaan ke OpenAI API
-            full_prompt = f"{SYSTEM_PROMPT}\n\nDeskripsi Proyek Pengguna:\n\"{deskripsi_proyek}\""
-            response = await self.client.chat.completions.create(
-                model="gpt-4o-mini",
-                messages=[{"role": "user", "content": full_prompt}],
-                response_format={"type": "json_object"},
-                temperature=0.5
-            )
+            # Emoji acak untuk variasi
+            emojis = ["📁", "📌", "✅", "💡", "⭐", "🔧", "🧩"]
+            random_emoji = random.choice(emojis)
             
-            clean_response = response.choices[0].message.content.strip()
-            proposal_data = json.loads(clean_response)
+            new_category = await ctx.guild.create_category(name=f"{random_emoji}│{category_name.upper()}")
+            await new_category.create_text_channel(name="💬│diskusi")
+            await new_category.create_voice_channel(name="🎙️ Voice Chat")
 
-            # Memformat proposal menjadi pesan Embed
-            embed = discord.Embed(
-                title="🤖 Proposal Struktur Server dari AI",
-                description=f"Berikut adalah rancangan berdasarkan deskripsi Anda. Tekan tombol di bawah untuk konfirmasi.",
-                color=discord.Color.blue()
-            )
-            category_name = proposal_data.get("category_name", "Nama Kategori Tidak Ditemukan")
-            embed.add_field(name="Nama Kategori", value=f"**{category_name}**", inline=False)
-            text_channels = [ch['name'] for ch in proposal_data.get('channels', []) if ch['type'] == 'text']
-            voice_channels = [ch['name'] for ch in proposal_data.get('channels', []) if ch['type'] == 'voice']
-            forum_channels = [ch['name'] for ch in proposal_data.get('channels', []) if ch['type'] == 'forum']
-
-            if text_channels:
-                embed.add_field(name="Text Channels", value="\n".join([f"`#{name}`" for name in text_channels]), inline=True)
-            if voice_channels:
-                embed.add_field(name="Voice Channels", value="\n".join([f"`{name}`" for name in voice_channels]), inline=True)
-            if forum_channels:
-                embed.add_field(name="Forum Channels", value="\n".join([f"`#{name}`" for name in forum_channels]), inline=True)
-            
-            # Kirim proposal dengan tombol konfirmasi
-            view = ConfirmationView(author=ctx.author, proposal_data=proposal_data)
-            await msg.edit(content="", embed=embed, view=view)
-
-        except json.JSONDecodeError:
-            await msg.edit(content="Maaf, AI memberikan respons dengan format yang tidak valid. Coba deskripsi yang berbeda.")
+            await msg.edit(content=f"✅ Kategori `{category_name}` berhasil dibuat dengan channel dasar.")
         except Exception as e:
-            await msg.edit(content=f"Terjadi kesalahan: {e}")
-            logger.error(f"Error pada perintah createserver: {e}", exc_info=True)
+            await msg.edit(content=f"❌ Gagal membuat kategori: {e}")
 
-    @create_server_command.error
-    async def create_server_error(self, ctx, error):
-        """Handler untuk error pada perintah createserver."""
-        if isinstance(error, commands.MissingPermissions):
-            await ctx.send("Maaf, Anda tidak memiliki izin `Manage Channels` untuk menggunakan perintah ini.")
-        elif isinstance(error, commands.MissingRequiredArgument):
-            await ctx.send("Harap berikan deskripsi proyek. Contoh: `!createserver sebuah server untuk tim gaming Valorant`")
-        elif isinstance(error, commands.CommandOnCooldown):
-            await ctx.send(f"Perintah ini sedang dalam cooldown, coba lagi dalam {error.retry_after:.2f} detik.")
+    @commands.command(name="deletechannel", help="Menghapus channel berdasarkan nama.")
+    @commands.has_permissions(manage_channels=True)
+    async def delete_channel(self, ctx: commands.Context, *, channel_name: str):
+        """
+        Menghapus sebuah channel teks atau suara berdasarkan namanya.
+        Contoh: !deletechannel diskusi-lama
+        """
+        # Mencari channel dengan mencocokkan nama (case-insensitive)
+        channel_to_delete = discord.utils.get(ctx.guild.channels, name=channel_name)
+        
+        if channel_to_delete:
+            try:
+                await channel_to_delete.delete(reason=f"Dihapus oleh {ctx.author}")
+                await ctx.send(f"✅ Channel `{channel_name}` berhasil dihapus.")
+            except Exception as e:
+                await ctx.send(f"❌ Gagal menghapus channel: {e}")
         else:
-            logger.error(f"Error tidak dikenal pada perintah createserver: {error}", exc_info=True)
-            await ctx.send(f"Terjadi kesalahan tak terduga: {error}")
+            await ctx.send(f"⚠️ Channel dengan nama `{channel_name}` tidak ditemukan.")
 
-async def setup(bot):
+    @commands.command(name="deletecategory", help="Menghapus kategori dan semua isinya.")
+    @commands.has_permissions(manage_channels=True)
+    async def delete_category(self, ctx: commands.Context, *, category_name: str):
+        """
+        Menghapus sebuah kategori dan SEMUA channel di dalamnya.
+        PERHATIAN: Aksi ini tidak dapat diurungkan.
+        Contoh: !deletecategory zona-event
+        """
+        category_to_delete = discord.utils.get(ctx.guild.categories, name=category_name)
+        
+        if not category_to_delete:
+            await ctx.send(f"⚠️ Kategori `{category_name}` tidak ditemukan.")
+            return
+
+        # --- View Konfirmasi ---
+        class ConfirmationView(ui.View):
+            def __init__(self, author):
+                super().__init__(timeout=60)
+                self.author = author
+                self.confirmed = False
+
+            async def interaction_check(self, interaction: discord.Interaction) -> bool:
+                return interaction.user.id == self.author.id
+
+            @ui.button(label="Ya, Hapus Semua", style=discord.ButtonStyle.danger)
+            async def confirm(self, interaction: discord.Interaction, button: ui.Button):
+                self.confirmed = True
+                self.stop()
+                await interaction.response.defer()
+
+            @ui.button(label="Batal", style=discord.ButtonStyle.secondary)
+            async def cancel(self, interaction: discord.Interaction, button: ui.Button):
+                self.stop()
+                await interaction.response.defer()
+
+        view = ConfirmationView(ctx.author)
+        warning_msg = await ctx.send(
+            f"🚨 **PERINGATAN!** Anda akan menghapus kategori `{category_name}` dan **semua channel di dalamnya**. Aksi ini permanen. Yakin ingin melanjutkan?",
+            view=view
+        )
+
+        await view.wait()
+        await warning_msg.delete()
+
+        if view.confirmed:
+            processing_msg = await ctx.send(f"⏳ Menghapus kategori `{category_name}`...")
+            try:
+                # Hapus semua channel di dalam kategori terlebih dahulu
+                for channel in category_to_delete.channels:
+                    await channel.delete(reason=f"Bagian dari penghapusan kategori oleh {ctx.author}")
+                    await asyncio.sleep(0.5)
+                
+                # Hapus kategori itu sendiri
+                await category_to_delete.delete(reason=f"Dihapus oleh {ctx.author}")
+                await processing_msg.edit(content=f"✅ Kategori `{category_name}` dan semua isinya berhasil dihapus.")
+            except Exception as e:
+                await processing_msg.edit(content=f"❌ Terjadi kesalahan saat menghapus: {e}")
+        else:
+            await ctx.send("Penghapusan kategori dibatalkan.", delete_after=10)
+
+
+    # Error handler untuk cog ini
+    async def cog_command_error(self, ctx: commands.Context, error: commands.CommandError):
+        if isinstance(error, commands.MissingPermissions):
+            await ctx.send(f"❌ Anda tidak memiliki izin yang diperlukan untuk menjalankan perintah ini. Izin yang dibutuhkan: `{', '.join(error.missing_permissions)}`")
+        elif isinstance(error, commands.CommandOnCooldown):
+            await ctx.send(f"⏳ Perintah ini sedang dalam cooldown. Coba lagi dalam **{error.retry_after:.1f} detik**.")
+        else:
+            logger.error(f"Error pada cog ServerCreator: {error}", exc_info=True)
+            # await ctx.send("Terjadi kesalahan yang tidak diketahui.")
+
+async def setup(bot: commands.Bot):
     await bot.add_cog(ServerCreatorCog(bot))
-
