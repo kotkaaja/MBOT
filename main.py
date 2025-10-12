@@ -97,7 +97,7 @@ async def on_command_error(ctx: commands.Context, error: commands.CommandError):
 # ============================
 async def load_cogs():
     """Memuat semua fitur (Cogs) dari direktori cogs."""
-    cogs_to_load = ['scanner', 'char_story', 'general', 'server_creator']
+    cogs_to_load = ['scanner', 'char_story', 'general', 'server_creator', 'converter']
     for cog_name in cogs_to_load:
         try:
             await bot.load_extension(f'cogs.{cog_name}')
