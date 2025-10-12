@@ -1,110 +1,97 @@
 import discord
 from discord.ext import commands
-import asyncio
 import yt_dlp
 import os
+import asyncio
 import logging
-import re
-from utils.database import get_upload_channel # Import fungsi baru dari database
 
-# Mengambil logger
+from utils.database import get_upload_channel
+
+# Ambil logger
 logger = logging.getLogger(__name__)
 
 class ConverterCog(commands.Cog, name="Converter"):
     def __init__(self, bot):
         self.bot = bot
-        self.temp_dir = "temp_audio"
-        if not os.path.exists(self.temp_dir):
-            os.makedirs(self.temp_dir)
-
-    def _cleanup_file(self, path):
-        try:
-            if os.path.exists(path):
-                os.remove(path)
-        except Exception as e:
-            logger.error(f"Gagal hapus file sementara {path}: {e}")
-
-    async def _download_audio(self, url: str) -> dict:
-        output_path = os.path.join(self.temp_dir, '%(id)s.%(ext)s')
-        
-        ydl_opts = {
-            'format': 'bestaudio/best',
-            'outtmpl': output_path,
-            'postprocessors': [{'key': 'FFmpegExtractAudio', 'preferredcodec': 'mp3', 'preferredquality': '192'}],
-            'noplaylist': True,
-            'quiet': True,
-            'nocheckcertificate': True,
-            'default_search': 'ytsearch', # Jika link spotify, cari di youtube
-        }
-
-        loop = asyncio.get_event_loop()
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            try:
-                info = await loop.run_in_executor(None, lambda: ydl.extract_info(url, download=True))
-                downloaded_file = ydl.prepare_filename(info)
-                final_path = os.path.splitext(downloaded_file)[0] + '.mp3'
-                
-                if not os.path.exists(final_path):
-                    return {"error": "Gagal mengonversi file ke MP3."}
-                
-                if os.path.getsize(final_path) > 8 * 1024 * 1024:
-                    self._cleanup_file(final_path)
-                    return {"error": "File audio terlalu besar (lebih dari 8MB)."}
-
-                return {
-                    "path": final_path,
-                    "title": info.get('title', 'N/A'),
-                    "uploader": info.get('uploader', 'N/A'),
-                    "duration": info.get('duration', 0)
-                }
-            except Exception as e:
-                logger.error(f"yt-dlp download error: {e}")
-                return {"error": "Gagal mengunduh audio. Pastikan link valid dan tidak bersifat pribadi."}
 
     @commands.command(name="convert")
-    @commands.cooldown(1, 30, commands.BucketType.user)
+    @commands.cooldown(1, 30, commands.BucketType.user) # Cooldown dinaikkan sedikit
     async def convert_command(self, ctx, *, url: str):
-        """Konversi link YouTube/TikTok/Spotify menjadi link MP3 langsung."""
+        """Mengonversi link dari YouTube/TikTok/Spotify menjadi file MP3."""
+        # 1. Cek channel unggah dari database
         upload_channel_id = get_upload_channel(ctx.guild.id)
         if not upload_channel_id:
             return await ctx.send("❌ Channel unggah MP3 belum diatur. Admin perlu menjalankan `!setuploadchannel #channel` terlebih dahulu.")
-            
+
         upload_channel = self.bot.get_channel(upload_channel_id)
         if not upload_channel:
-            return await ctx.send(f"❌ Channel unggah yang diatur tidak dapat ditemukan. Mohon atur ulang.")
+            return await ctx.send(f"❌ Channel unggah (ID: {upload_channel_id}) tidak ditemukan atau saya tidak memiliki akses. Harap atur ulang.")
 
-        url = url.strip('<>')
-        if not re.match(r'https?://\S+', url):
-            return await ctx.send("❌ URL yang Anda masukkan tidak valid.")
+        processing_msg = await ctx.send(f"📥 Memproses link Anda... `{url[:70]}`")
 
-        processing_msg = await ctx.send(f"⏳ Memproses link Anda...")
-
+        loop = asyncio.get_event_loop()
+        
+        # Opsi untuk yt-dlp
+        ydl_opts = {
+            'format': 'bestaudio/best',
+            'postprocessors': [{'key': 'FFmpegExtractAudio', 'preferredcodec': 'mp3', 'preferredquality': '192'}],
+            'outtmpl': f'temp/{ctx.message.id}', # Nama file tanpa ekstensi
+            'noplaylist': True,
+            'quiet': True,
+            'default_search': 'ytsearch', # Default ke pencarian YouTube jika bukan URL
+            'extractor_args': {
+                'youtube': {
+                    'skip': ['hls', 'dash'], # Menghindari format streaming yang rumit
+                }
+            },
+        }
+        
+        filename = None # Inisialisasi nama file
         try:
-            result = await self._download_audio(url)
-            if "error" in result:
-                return await processing_msg.edit(content=f"❌ {result['error']}")
+            # 2. Proses Unduhan di thread terpisah agar bot tidak 'freeze'
+            await processing_msg.edit(content="Downloading... ⏳ (Proses ini bisa memakan waktu beberapa saat)")
+            
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                # Menjalankan proses blocking di executor
+                info = await loop.run_in_executor(None, lambda: ydl.extract_info(url, download=True))
+                filename = f"temp/{ctx.message.id}.mp3"
 
-            file_path = result.get("path")
-            if not file_path:
-                return await processing_msg.edit(content="❌ Terjadi kesalahan, file MP3 tidak ditemukan.")
+            if not os.path.exists(filename):
+                raise FileNotFoundError("File MP3 tidak ditemukan setelah proses unduh.")
 
-            with open(file_path, 'rb') as f:
-                uploaded_file = await upload_channel.send(file=discord.File(f, filename=f"{result['title']}.mp3"))
+            # 3. Kirim file ke channel yang sudah diatur
+            file_title = info.get('title', 'audio')
+            await processing_msg.edit(content=f"📤 Mengunggah `{file_title}`...")
             
-            mp3_url = uploaded_file.attachments[0].url
-            duration_str = f"{int(result['duration'] // 60)}:{int(result['duration'] % 60):02d}"
+            with open(filename, 'rb') as fp:
+                # Membuat nama file yang lebih bersih untuk diunggah
+                clean_filename = f"{file_title}.mp3".replace("/", "_").replace("\\", "_")
+                
+                await upload_channel.send(
+                    content=f"🎵 Konversi berhasil untuk **{file_title}**\nDiminta oleh: {ctx.author.mention}",
+                    file=discord.File(fp, filename=clean_filename)
+                )
             
-            embed = discord.Embed(title="✅ Audio Berhasil Diproses!", color=discord.Color.green())
-            embed.add_field(name="Judul", value=result['title'], inline=False)
-            embed.add_field(name="Artis/Uploader", value=result['uploader'], inline=True)
-            embed.add_field(name="Durasi", value=duration_str, inline=True)
-            embed.add_field(name="Link MP3 (Boombox)", value=f"`{mp3_url}`", inline=False)
-            embed.set_footer(text=f"Diminta oleh: {ctx.author.display_name}")
-            
-            await processing_msg.edit(content=None, embed=embed)
+            await processing_msg.edit(content=f"✅ **Berhasil!** File MP3 telah diunggah ke {upload_channel.mention}.")
+
+        except yt_dlp.utils.DownloadError as e:
+            logger.error(f"yt-dlp DownloadError: {e}")
+            await processing_msg.edit(content=f"❌ **Gagal mengunduh.** Video ini mungkin privat, dibatasi umur, atau tidak tersedia di wilayah Anda.")
+        except Exception as e:
+            logger.error(f"Gagal mengonversi link: {url}", exc_info=e)
+            await processing_msg.edit(content=f"❌ **Terjadi kesalahan internal.** Cek log bot untuk detail.")
+        
         finally:
-            if 'result' in locals() and 'path' in result:
-                self._cleanup_file(result['path'])
+            # 4. Hapus file sementara dengan aman
+            if filename and os.path.exists(filename):
+                try:
+                    os.remove(filename)
+                except Exception as e:
+                    logger.error(f"Gagal menghapus file sementara {filename}", exc_info=e)
 
 async def setup(bot):
+    # Buat direktori 'temp' jika belum ada
+    if not os.path.exists('temp'):
+        os.makedirs('temp')
     await bot.add_cog(ConverterCog(bot))
+
