@@ -9,3 +9,4 @@ rarfile==4.1
 yt-dlp
 pydub
 psycopg2-binary
+spotdl
