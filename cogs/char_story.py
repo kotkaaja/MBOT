@@ -76,64 +76,52 @@ Story :
 # UI COMPONENTS (MODAL & VIEWS)
 # ============================
 
-# Modal untuk mengumpulkan data karakter dari pengguna
-class CSInputModal(ui.Modal, title="Formulir Detail Karakter"):
-    nama_char = ui.TextInput(label="Nama Lengkap Karakter (IC)", placeholder="Contoh: John Washington, Kenji Tanaka", style=discord.TextStyle.short, required=True)
-    level = ui.TextInput(label="Level Karakter", placeholder="Contoh: 1", style=discord.TextStyle.short, required=True, max_length=3)
-    jenis_kelamin = ui.TextInput(label="Jenis Kelamin", placeholder="Contoh: Laki-laki / Perempuan", style=discord.TextStyle.short, required=True)
-    tanggal_lahir = ui.TextInput(label="Tanggal Lahir", placeholder="Contoh: 17 Agustus 1995", style=discord.TextStyle.short, required=True)
-    kota_asal = ui.TextInput(label="Kota Asal", placeholder="Contoh: Chicago, Illinois", style=discord.TextStyle.short, required=True)
-    
-    def __init__(self, server: str, story_type: str, bot_instance):
-        super().__init__(title=f"Detail Karakter ({story_type.replace('_',' ').title()})")
+# Modal Bagian 2: Mengumpulkan detail cerita yang lebih dalam
+class CSInputModal_Part2(ui.Modal):
+    bakat_dominan = ui.TextInput(label="Bakat/Keahlian Dominan Karakter", placeholder="Contoh: Penembak jitu, negosiator ulung, pembalap liar", style=discord.TextStyle.short, required=True)
+    culture = ui.TextInput(label="Kultur/Etnis (Opsional)", placeholder="Contoh: African-American, Hispanic, Italian-American", style=discord.TextStyle.short, required=False)
+    detail_tambahan = ui.TextInput(label="Detail Tambahan (Opsional)", placeholder="Contoh: Punya hutang, dikhianati geng lama, dll.", style=discord.TextStyle.paragraph, required=False)
+
+    def __init__(self, server: str, story_type: str, bot_instance, part1_data: Dict):
+        super().__init__(title=f"Detail Cerita ({story_type.replace('_',' ').title()}) (2/2)")
         self.server = server
         self.story_type = story_type
         self.bot = bot_instance
-        
-        # Tambahkan field lanjutan di sini agar bisa dinamis
-        self.bakat_dominan = ui.TextInput(label="Bakat/Keahlian Dominan Karakter", placeholder="Contoh: Penembak jitu, negosiator ulung, pembalap liar", style=discord.TextStyle.short, required=True)
-        self.culture = ui.TextInput(label="Kultur/Etnis (Opsional)", placeholder="Contoh: African-American, Hispanic, Italian-American", style=discord.TextStyle.short, required=False)
-        self.detail_tambahan = ui.TextInput(label="Detail Tambahan (Opsional)", placeholder="Contoh: Punya hutang, dikhianati geng lama, dll.", style=discord.TextStyle.paragraph, required=False)
-
-        self.add_item(self.bakat_dominan)
-        self.add_item(self.culture)
-        self.add_item(self.detail_tambahan)
-
+        self.part1_data = part1_data
 
     async def on_submit(self, interaction: discord.Interaction):
-        # Defer secara publik, agar semua orang tahu bot sedang bekerja
+        # Defer secara publik agar pengguna tahu bot sedang bekerja
         await interaction.response.defer()
-        
-        try:
-            # Panggil fungsi untuk generate story dengan parameter baru
-            story_text = await self.bot.get_cog("CharacterStory").generate_story_from_ai(
-                server=self.server,
-                nama_char=self.nama_char.value,
-                tanggal_lahir=self.tanggal_lahir.value,
-                kota_asal=self.kota_asal.value,
-                story_type=self.story_type,
-                bakat=self.bakat_dominan.value,
-                culture=self.culture.value,
-                detail=self.detail_tambahan.value,
-                jenis_kelamin=self.jenis_kelamin.value,
-                level=self.level.value
-            )
 
-            # Format output sesuai server yang dipilih
+        try:
+            # Gabungkan data dari formulir bagian 1 dan 2
+            all_data = self.part1_data.copy()
+            all_data.update({
+                "bakat": self.bakat_dominan.value,
+                "culture": self.culture.value,
+                "detail": self.detail_tambahan.value,
+                "server": self.server,
+                "story_type": self.story_type,
+            })
+
+            # Panggil AI untuk menghasilkan cerita
+            story_text = await self.bot.get_cog("CharacterStory").generate_story_from_ai(**all_data)
+
+            # Format output sesuai server
             server_format = SERVER_CONFIG[self.server]["format"]
             final_cs = server_format.format(
-                nama_char=self.nama_char.value,
-                tanggal_lahir=self.tanggal_lahir.value,
-                kota_asal=self.kota_asal.value,
+                nama_char=all_data['nama_char'],
+                tanggal_lahir=all_data['tanggal_lahir'],
+                kota_asal=all_data['kota_asal'],
                 story=story_text,
-                level=self.level.value,
-                jenis_kelamin=self.jenis_kelamin.value
+                level=all_data['level'],
+                jenis_kelamin=all_data['jenis_kelamin']
             )
 
             # Buat embed untuk hasil
             embed = discord.Embed(
-                title=f"📝 Character Story untuk {self.nama_char.value}",
-                description=f"Berikut adalah draf cerita yang dihasilkan AI. Silakan salin dan lengkapi bagian yang diperlukan.",
+                title=f"📝 Character Story untuk {all_data['nama_char']}",
+                description="Berikut draf cerita yang dihasilkan AI. Salin dan lengkapi bagian yang diperlukan.",
                 color=discord.Color.blue()
             )
             embed.add_field(name="Server", value=SERVER_CONFIG[self.server]['name'], inline=True)
@@ -141,9 +129,9 @@ class CSInputModal(ui.Modal, title="Formulir Detail Karakter"):
             embed.set_footer(text=f"Diminta oleh: {interaction.user.display_name}")
 
             # Kirim hasil secara publik
-            content_message = f"Character Story untuk **{self.nama_char.value}**, diminta oleh {interaction.user.mention}:"
+            content_message = f"Character Story untuk **{all_data['nama_char']}**, diminta oleh {interaction.user.mention}:"
             
-            if len(final_cs) > 1900: 
+            if len(final_cs) > 1900:
                 await interaction.followup.send(content=content_message, embed=embed)
                 for i in range(0, len(final_cs), 1900):
                     chunk = final_cs[i:i+1900]
@@ -152,10 +140,35 @@ class CSInputModal(ui.Modal, title="Formulir Detail Karakter"):
                 await interaction.followup.send(content=content_message, embed=embed)
                 await interaction.followup.send(f"```\n{final_cs}\n```")
 
-
         except Exception as e:
             logger.error(f"Gagal membuat CS dengan OpenAI: {e}", exc_info=True)
-            await interaction.followup.send("❌ Terjadi kesalahan saat menghubungi AI OpenAI. Pastikan API Key valid dan memiliki kuota. Coba lagi nanti.")
+            await interaction.followup.send("❌ Terjadi kesalahan saat menghubungi AI OpenAI. Pastikan API Key valid dan memiliki kuota.")
+
+# Modal Bagian 1: Mengumpulkan data dasar karakter
+class CSInputModal_Part1(ui.Modal):
+    nama_char = ui.TextInput(label="Nama Lengkap Karakter (IC)", placeholder="Contoh: John Washington, Kenji Tanaka", style=discord.TextStyle.short, required=True)
+    level = ui.TextInput(label="Level Karakter", placeholder="Contoh: 1", style=discord.TextStyle.short, required=True, max_length=3)
+    jenis_kelamin = ui.TextInput(label="Jenis Kelamin", placeholder="Contoh: Laki-laki / Perempuan", style=discord.TextStyle.short, required=True)
+    tanggal_lahir = ui.TextInput(label="Tanggal Lahir", placeholder="Contoh: 17 Agustus 1995", style=discord.TextStyle.short, required=True)
+    kota_asal = ui.TextInput(label="Kota Asal", placeholder="Contoh: Chicago, Illinois", style=discord.TextStyle.short, required=True)
+
+    def __init__(self, server: str, story_type: str, bot_instance):
+        super().__init__(title=f"Detail Karakter ({story_type.replace('_',' ').title()}) (1/2)")
+        self.server = server
+        self.story_type = story_type
+        self.bot = bot_instance
+
+    async def on_submit(self, interaction: discord.Interaction):
+        part1_data = {
+            "nama_char": self.nama_char.value,
+            "level": self.level.value,
+            "jenis_kelamin": self.jenis_kelamin.value,
+            "tanggal_lahir": self.tanggal_lahir.value,
+            "kota_asal": self.kota_asal.value,
+        }
+        # Tampilkan modal kedua setelah yang pertama di-submit
+        await interaction.response.send_modal(CSInputModal_Part2(server=self.server, story_type=self.story_type, bot_instance=self.bot, part1_data=part1_data))
+
 
 # View untuk memilih tipe cerita (Goodside/Badside)
 class StoryTypeView(ui.View):
@@ -166,11 +179,11 @@ class StoryTypeView(ui.View):
 
     @ui.button(label="😇 Sisi Baik (Goodside)", style=discord.ButtonStyle.success, emoji="😇")
     async def good_side(self, interaction: discord.Interaction, button: ui.Button):
-        await interaction.response.send_modal(CSInputModal(server=self.server, story_type="good_side", bot_instance=self.bot))
+        await interaction.response.send_modal(CSInputModal_Part1(server=self.server, story_type="good_side", bot_instance=self.bot))
 
     @ui.button(label="😈 Sisi Jahat (Badside)", style=discord.ButtonStyle.danger, emoji="😈")
     async def bad_side(self, interaction: discord.Interaction, button: ui.Button):
-        await interaction.response.send_modal(CSInputModal(server=self.server, story_type="bad_side", bot_instance=self.bot))
+        await interaction.response.send_modal(CSInputModal_Part1(server=self.server, story_type="bad_side", bot_instance=self.bot))
 
 # View untuk dropdown pemilihan server
 class ServerSelectionView(ui.View):
