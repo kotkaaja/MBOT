@@ -69,8 +69,25 @@ STORY :
 Story :
 
 {story}"""
+    },
+    # ... (konfigurasi server lain)
+    "gcrp": {
+        "name": "GCRP",
+        "rules": """- Minimal 4 paragraf dan setiap paragraf minimal memiliki 4 baris.
+- Menggunakan bahasa Indonesia yang baku.
+- Alur cerita yang jelas dan tidak berbelit-belit.
+- Dilarang keras menjiplak/copy paste cerita orang lain.
+- Penulisan nama karakter tidak menggunakan garis bawah (_).""",
+        "format": """**[GCRP] FORMAT CHARACTER STORY**
+* Nama UCP: (Isi Manual)
+* Nama Character: {nama_char}
+* Umur: (Isi Manual)
+* Latar Belakang Cerita:
+
+{story}"""
     }
 }
+
 
 # ============================
 # UI COMPONENTS (MODAL & VIEWS)
@@ -229,6 +246,7 @@ class ServerSelectionView(ui.View):
             discord.SelectOption(label="SSRP", value="ssrp", description="Buat CS untuk server SSRP."),
             discord.SelectOption(label="Virtual RP", value="virtual_rp", description="Buat CS untuk server Virtual RP."),
             discord.SelectOption(label="AARP", value="aarp", description="Buat CS untuk server AARP."),
+            discord.SelectOption(label="GCRP", value="gcrp", description="Buat CS untuk server GCRP."),
         ],
         custom_id="server_select"
     )
@@ -318,7 +336,6 @@ class CharacterStoryCog(commands.Cog, name="CharacterStory"):
         return cleaned_story
 
     @commands.command(name="setupcs")
-    @commands.has_permissions(administrator=True)
     async def setup_cs_panel(self, ctx):
         """Mengirim panel untuk membuat Character Story (Admin only)."""
         embed = discord.Embed(
