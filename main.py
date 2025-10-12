@@ -107,12 +107,15 @@ async def load_cogs():
 
 async def main():
     """Fungsi utama untuk menjalankan bot."""
-    # Inisialisasi database setelah bot siap
+    # PERBAIKAN: Panggil init_database() DI SINI, sebelum bot login.
+    # Ini memastikan database dan tabel sepenuhnya siap.
+    init_database()
+    
     @bot.event
     async def on_ready():
         logger.info(f'Logged in as {bot.user} (ID: {bot.user.id})')
         logger.info('------')
-        init_database()
+        # Kita tidak perlu lagi memanggil init_database() di sini.
 
     if not os.path.exists(bot.config.TEMP_DIR):
         os.makedirs(bot.config.TEMP_DIR)
