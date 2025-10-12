@@ -5,6 +5,7 @@ import asyncio
 import logging
 import json
 from typing import List, Dict, Any, Optional
+from openai import AsyncOpenAI
 
 # Mengambil logger
 logger = logging.getLogger(__name__)
@@ -258,7 +259,7 @@ class ServerCreatorCog(commands.Cog, name="ServerCreator"):
         return json.loads(response.choices[0].message.content)
 
     @commands.command(name="createserver", help="Membuat struktur server lengkap menggunakan proposal AI.")
-    @commands.has_permissions(administrator=True)
+    @commands.is_guild_owner()
     @commands.cooldown(1, 120, commands.BucketType.user)
     async def create_server(self, ctx: commands.Context, *, deskripsi: str, existing_message: Optional[discord.Message] = None):
         message_handler = existing_message or ctx
@@ -277,7 +278,7 @@ class ServerCreatorCog(commands.Cog, name="ServerCreator"):
             await message_handler.edit(content=f"❌ Terjadi kesalahan saat berkomunikasi dengan AI: {e}")
 
     @commands.command(name="createcategory", help="Membuat satu kategori interaktif menggunakan proposal AI.")
-    @commands.has_permissions(manage_channels=True)
+    @commands.is_guild_owner()
     @commands.cooldown(1, 60, commands.BucketType.user)
     async def create_category(self, ctx: commands.Context, *, deskripsi: str, existing_message: Optional[discord.Message] = None):
         message_handler = existing_message or ctx
@@ -296,7 +297,7 @@ class ServerCreatorCog(commands.Cog, name="ServerCreator"):
             await message_handler.edit(content=f"❌ Terjadi kesalahan saat berkomunikasi dengan AI: {e}")
 
     @commands.command(name="deletecategory", help="Menghapus kategori dan semua isinya.")
-    @commands.has_permissions(manage_channels=True)
+    @commands.is_guild_owner()
     async def delete_category(self, ctx: commands.Context, *, category_name: str):
         category = discord.utils.get(ctx.guild.categories, name=category_name)
         if not category: return await ctx.send(f"⚠️ Kategori `{category_name}` tidak ditemukan.")
@@ -332,10 +333,14 @@ class ServerCreatorCog(commands.Cog, name="ServerCreator"):
 
     async def cog_command_error(self, ctx: commands.Context, error: commands.CommandError):
         # Error handler umum
-        if isinstance(error, commands.MissingPermissions): await ctx.send(f"❌ Izin tidak cukup: `{', '.join(error.missing_permissions)}`", ephemeral=True)
-        elif isinstance(error, commands.CommandOnCooldown): await ctx.send(f"⏳ Cooldown. Coba lagi dalam **{error.retry_after:.1f} detik**.", ephemeral=True)
-        elif isinstance(error, commands.MissingRequiredArgument): await ctx.send(f"❌ Anda perlu memberikan deskripsi. Contoh: `!createserver server untuk komunitas game Valorant`", ephemeral=True)
-        else: logger.error(f"Error pada cog ServerCreator: {error}", exc_info=True)
+        if isinstance(error, commands.MissingPermissions) or isinstance(error, commands.NotGuildOwner):
+            await ctx.send(f"❌ Perintah ini hanya untuk pemilik server.", ephemeral=True)
+        elif isinstance(error, commands.CommandOnCooldown):
+            await ctx.send(f"⏳ Cooldown. Coba lagi dalam **{error.retry_after:.1f} detik**.", ephemeral=True)
+        elif isinstance(error, commands.MissingRequiredArgument):
+            await ctx.send(f"❌ Anda perlu memberikan deskripsi. Contoh: `!createserver server untuk komunitas game Valorant`", ephemeral=True)
+        else:
+            logger.error(f"Error pada cog ServerCreator: {error}", exc_info=True)
 
 async def setup(bot: commands.Bot):
     await bot.add_cog(ServerCreatorCog(bot))
