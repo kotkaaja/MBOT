@@ -38,7 +38,6 @@ logger = setup_logging()
 class Config:
     """Kelas untuk menampung semua variabel konfigurasi dari environment."""
     def __init__(self):
-        # Variabel dari Environment
         self.BOT_TOKEN = os.getenv("BOT_TOKEN")
         self.OPENAI_API_KEYS = [k.strip() for k in os.getenv("OPENAI_API_KEYS", "").split(',') if k.strip()]
         self.GEMINI_API_KEYS = [k.strip() for k in os.getenv("GEMINI_API_KEYS", "").split(',') if k.strip()]
@@ -47,8 +46,6 @@ class Config:
         self.ALLOWED_CHANNEL_IDS = [int(cid.strip()) for cid in os.getenv("ALLOWED_CHANNEL_IDS", "").split(',') if cid.strip()]
         self.ADMIN_CHANNEL_ID = int(os.getenv("ADMIN_CHANNEL_ID")) if os.getenv("ADMIN_CHANNEL_ID") else None
         self.ADMIN_USER_IDS = [int(uid.strip()) for uid in os.getenv("ADMIN_USER_IDS", "").split(',') if uid.strip()]
-
-        # Konstanta Bot - Disesuaikan dengan BotScanner
         self.ALLOWED_EXTENSIONS = ['.lua', '.txt', '.zip', '.7z', '.rar', '.py', '.js', '.php']
         self.TEMP_DIR = "temp_scan"
         self.MAX_FILE_SIZE_MB = 3
@@ -69,10 +66,42 @@ class MyBot(commands.Bot):
         self.start_time = time.time()
         self.persistent_views_added = False
 
-# Inisialisasi Bot
 intents = discord.Intents.default()
 intents.message_content = True
 bot = MyBot(command_prefix='!', intents=intents, help_command=None)
+
+# ============================
+# EVENT & ERROR HANDLING
+# ============================
+@bot.event
+async def on_command_error(ctx: commands.Context, error: commands.CommandError):
+    """Error handler global untuk semua perintah."""
+    # Mengabaikan error jika perintah tidak ditemukan
+    if isinstance(error, commands.CommandNotFound):
+        return
+
+    # Menangani error spesifik
+    if isinstance(error, commands.NotGuildOwner):
+        await ctx.send("❌ Perintah ini hanya untuk pemilik server.", ephemeral=True, delete_after=10)
+    elif isinstance(error, commands.CommandOnCooldown):
+        await ctx.send(f"⏳ Cooldown. Coba lagi dalam **{error.retry_after:.1f} detik**.", ephemeral=True, delete_after=10)
+    elif isinstance(error, commands.MissingRequiredArgument):
+        await ctx.send(f"❌ Argumen kurang. Contoh: `!{ctx.command.name} server untuk komunitas Valorant`", ephemeral=True, delete_after=10)
+    
+    # Menangani error yang lebih umum yang berasal dari check
+    elif isinstance(error, commands.CheckFailure):
+        # Ini akan menangkap NotGuildOwner dan check lainnya jika ada
+        await ctx.send("❌ Anda tidak memiliki izin untuk menggunakan perintah ini.", ephemeral=True, delete_after=10)
+    
+    # Menangani error saat menjalankan perintah
+    elif isinstance(error, commands.CommandInvokeError):
+        logger.error(f"Error pada perintah '{ctx.command.qualified_name}': {error.original}", exc_info=True)
+        await ctx.send("❌ Terjadi kesalahan internal saat menjalankan perintah.", ephemeral=True, delete_after=10)
+    
+    # Error fallback
+    else:
+        logger.error(f"Error tidak dikenal: {error}", exc_info=True)
+        await ctx.send("❌ Terjadi kesalahan tak terduga.", ephemeral=True, delete_after=10)
 
 # ============================
 # FUNGSI UTAMA
@@ -89,10 +118,7 @@ async def load_cogs():
 
 async def main():
     """Fungsi utama untuk menjalankan bot."""
-    # Inisialisasi database sebelum bot berjalan
     init_database()
-
-    # Buat direktori temporary jika belum ada
     if not os.path.exists(bot.config.TEMP_DIR):
         os.makedirs(bot.config.TEMP_DIR)
         logger.info(f"✅ Direktori '{bot.config.TEMP_DIR}' berhasil dibuat.")
@@ -100,15 +126,15 @@ async def main():
     async with bot:
         await load_cogs()
         if not bot.config.BOT_TOKEN:
-            logger.error("❌ FATAL ERROR: BOT_TOKEN tidak ditemukan di environment variables.")
+            logger.error("❌ FATAL ERROR: BOT_TOKEN tidak ditemukan.")
             return
         try:
             await bot.start(bot.config.BOT_TOKEN)
         except discord.errors.LoginFailure:
-            logger.error("❌ FATAL ERROR: Gagal login. Pastikan BOT_TOKEN Anda valid.")
+            logger.error("❌ FATAL ERROR: Gagal login. Token tidak valid.")
 
 if __name__ == "__main__":
     try:
         asyncio.run(main())
     except KeyboardInterrupt:
-        logger.info("🛑 Bot dihentikan oleh user.")
+        logger.info("🛑 Bot dihentikan.")
