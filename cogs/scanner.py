@@ -294,31 +294,31 @@ class ScannerCog(commands.Cog, name="Scanner"):
     # ============================
     # FUNGSI ANALISIS AI
     # ============================
-    #async def _analyze_with_deepseek(self, code_snippet: str, api_key: str) -> Dict:
-        #async with httpx.AsyncClient(timeout=15.0) as client:
-            #response = await client.post(
-               # "https://api.deepseek.com/chat/completions",
-                #json={"model": "deepseek-chat", "messages": [{"role": "user", "content": AI_PROMPT.format(code_snippet=code_snippet[:3000])}], "response_format": {"type": "json_object"}, "temperature": 0.0},
-               # headers={"Authorization": f"Bearer {api_key}"}
-           # )
-            #response.raise_for_status()
-           # return json.loads(response.json()["choices"][0]["message"]["content"])
+    async def _analyze_with_deepseek(self, code_snippet: str, api_key: str) -> Dict:
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            response = await client.post(
+                "https://api.deepseek.com/chat/completions",
+                json={"model": "deepseek-chat", "messages": [{"role": "user", "content": AI_PROMPT.format(code_snippet=code_snippet[:3000])}], "response_format": {"type": "json_object"}, "temperature": 0.0},
+                headers={"Authorization": f"Bearer {api_key}"}
+            )
+            response.raise_for_status()
+            return json.loads(response.json()["choices"][0]["message"]["content"])
 
-   #async def _analyze_with_openai(self, code_snippet: str, api_key: str) -> Dict:
-       # client = AsyncOpenAI(api_key=api_key)
-       # response = await client.chat.completions.create(
-            #model="gpt-4o-mini",
-            #messages=[{"role": "user", "content": AI_PROMPT.format(code_snippet=code_snippet[:3000])}],
-           # response_format={"type": "json_object"}, temperature=0.0
-        #)
-        #return json.loads(response.choices[0].message.content)
+    async def _analyze_with_openai(self, code_snippet: str, api_key: str) -> Dict:
+        client = AsyncOpenAI(apij_key=apij_key)
+        response = await client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[{"role": "user", "content": AI_PROMPT.format(code_snippet=code_snippet[:3000])}],
+            response_format={"type": "json_object"}, temperature=0.0
+        )
+        return json.loads(response.choices[0].message.content)
 
-    #async def _analyze_with_gemini(self, code_snippet: str, api_key: str) -> Dict:
-        #genai.configure(api_key=api_key)
-        #model = genai.GenerativeModel('gemini-1.5-flash')
-        #response = await model.generate_content_async(AI_PROMPT.format(code_snippet=code_snippet[:3000]))
-        #cleaned_response = re.sub(r'```json\s*|\s*```', '', response.text.strip(), flags=re.DOTALL)
-        #return json.loads(cleaned_response)
+    async def _analyze_with_gemini(self, code_snippet: str, api_key: str) -> Dict:
+        genai.configure(api_key=api_key)
+        model = genai.GenerativeModel('gemini-1.5-flash')
+        response = await model.generate_content_async(AI_PROMPT.format(code_snippet=code_snippet[:3000]))
+        cleaned_response = re.sub(r'```json\s*|\s*```', '', response.text.strip(), flags=re.DOTALL)
+        return json.loads(cleaned_response)
 
     def _analyze_manually(self, detected_issues: List[Dict]) -> Dict:
         if not detected_issues: return {"script_purpose": "Tidak ada pola mencurigakan", "analysis_summary": "Analisis manual tidak menemukan pola berbahaya.", "confidence_score": 85}
