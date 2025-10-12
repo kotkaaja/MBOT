@@ -14,8 +14,20 @@ class ConverterCog(commands.Cog, name="Converter"):
     def __init__(self, bot):
         self.bot = bot
 
+    @commands.command(name="setuploadchannel")
+    @commands.has_permissions(administrator=True)
+    async def setup_upload_channel(self, ctx, channel: discord.TextChannel):
+        """Mengatur channel untuk mengupload hasil konversi MP3."""
+        from utils.database import set_upload_channel
+        
+        success = set_upload_channel(ctx.guild.id, channel.id)
+        if success:
+            await ctx.send(f"✅ **Channel upload berhasil diatur!**\nHasil konversi MP3 akan dikirim ke {channel.mention}")
+        else:
+            await ctx.send("❌ Gagal menyimpan pengaturan channel. Cek log bot untuk detail.")
+
     @commands.command(name="convert")
-    @commands.cooldown(1, 30, commands.BucketType.user) # Cooldown dinaikkan sedikit
+    @commands.cooldown(1, 30, commands.BucketType.user)
     async def convert_command(self, ctx, *, url: str):
         """Mengonversi link dari YouTube/TikTok/Spotify menjadi file MP3."""
         # 1. Cek channel unggah dari database
@@ -35,24 +47,23 @@ class ConverterCog(commands.Cog, name="Converter"):
         ydl_opts = {
             'format': 'bestaudio/best',
             'postprocessors': [{'key': 'FFmpegExtractAudio', 'preferredcodec': 'mp3', 'preferredquality': '192'}],
-            'outtmpl': f'temp/{ctx.message.id}', # Nama file tanpa ekstensi
+            'outtmpl': f'temp/{ctx.message.id}',
             'noplaylist': True,
             'quiet': True,
-            'default_search': 'ytsearch', # Default ke pencarian YouTube jika bukan URL
+            'default_search': 'ytsearch',
             'extractor_args': {
                 'youtube': {
-                    'skip': ['hls', 'dash'], # Menghindari format streaming yang rumit
+                    'skip': ['hls', 'dash'],
                 }
             },
         }
         
-        filename = None # Inisialisasi nama file
+        filename = None
         try:
-            # 2. Proses Unduhan di thread terpisah agar bot tidak 'freeze'
+            # 2. Proses Unduhan di thread terpisah
             await processing_msg.edit(content="Downloading... ⏳ (Proses ini bisa memakan waktu beberapa saat)")
             
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                # Menjalankan proses blocking di executor
                 info = await loop.run_in_executor(None, lambda: ydl.extract_info(url, download=True))
                 filename = f"temp/{ctx.message.id}.mp3"
 
@@ -64,7 +75,6 @@ class ConverterCog(commands.Cog, name="Converter"):
             await processing_msg.edit(content=f"📤 Mengunggah `{file_title}`...")
             
             with open(filename, 'rb') as fp:
-                # Membuat nama file yang lebih bersih untuk diunggah
                 clean_filename = f"{file_title}.mp3".replace("/", "_").replace("\\", "_")
                 
                 await upload_channel.send(
@@ -94,4 +104,3 @@ async def setup(bot):
     if not os.path.exists('temp'):
         os.makedirs('temp')
     await bot.add_cog(ConverterCog(bot))
-
