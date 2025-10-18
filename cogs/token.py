@@ -416,7 +416,7 @@ class TokenCog(commands.Cog, name="Token"):
     # --- PERINTAH SLASH COMMAND (ADMIN) ---
 
     @app_commands.command(name="open_claim", description="ADMIN: Membuka sesi klaim untuk sumber token tertentu.")
-    @app_commands.check(is_admin_check) # Menggunakan method check internal
+    @app_commands.check(self.is_admin_check) # Menggunakan method check internal
     @app_commands.autocomplete(alias=source_alias_autocomplete)
     async def open_claim(self, interaction: discord.Interaction, alias: str):
         await interaction.response.defer(ephemeral=True)
@@ -444,7 +444,7 @@ class TokenCog(commands.Cog, name="Token"):
 
 
     @app_commands.command(name="close_claim", description="ADMIN: Menutup sesi klaim dan mengirim notifikasi.")
-    @app_commands.check(is_admin_check)
+    @app_commands.check(self.is_admin_check)
     async def close_claim(self, interaction: discord.Interaction):
         await interaction.response.defer(ephemeral=True)
         if not self.bot.current_claim_source_alias:
@@ -476,7 +476,7 @@ class TokenCog(commands.Cog, name="Token"):
         await interaction.followup.send(f"🔴 Sesi klaim untuk `{closed_alias.title()}` telah ditutup.", ephemeral=True)
 
     @app_commands.command(name="admin_add_token", description="ADMIN: Menambahkan token custom ke sumber file (tanpa durasi).")
-    @app_commands.check(is_admin_check)
+    @app_commands.check(self.is_admin_check)
     @app_commands.autocomplete(alias=source_alias_autocomplete)
     async def admin_add_token(self, interaction: discord.Interaction, alias: str, token: str):
         await interaction.response.defer(ephemeral=True)
@@ -497,7 +497,7 @@ class TokenCog(commands.Cog, name="Token"):
                 await interaction.followup.send(f"❌ Gagal menambahkan token ke `{alias}` di GitHub.", ephemeral=True)
 
     @app_commands.command(name="admin_remove_token", description="ADMIN: Menghapus token dari sumber file tertentu.")
-    @app_commands.check(is_admin_check)
+    @app_commands.check(self.is_admin_check)
     @app_commands.autocomplete(alias=source_alias_autocomplete)
     async def admin_remove_token(self, interaction: discord.Interaction, alias: str, token: str):
         await interaction.response.defer(ephemeral=True)
@@ -525,7 +525,7 @@ class TokenCog(commands.Cog, name="Token"):
 
 
     @app_commands.command(name="admin_add_shared_token", description="ADMIN: Menambah token umum dg durasi (otomatis hapus saat expired).")
-    @app_commands.check(is_admin_check)
+    @app_commands.check(self.is_admin_check)
     @app_commands.describe(alias="Alias sumber token.", token="Token yang akan ditambahkan.", durasi="Durasi token (misal: 7d, 24h, 30m).")
     @app_commands.autocomplete(alias=source_alias_autocomplete)
     async def admin_add_shared_token(self, interaction: discord.Interaction, alias: str, token: str, durasi: str):
@@ -600,7 +600,7 @@ class TokenCog(commands.Cog, name="Token"):
 
     # --- [PERINTAH BARU] ---
     @app_commands.command(name="admin_give_token", description="ADMIN: Berikan token spesifik ke user dg durasi & kirim DM.")
-    @app_commands.check(is_admin_check)
+    @app_commands.check(self.is_admin_check)
     @app_commands.describe(
         user="User yang akan menerima token.",
         alias="Alias sumber token.",
@@ -687,7 +687,7 @@ class TokenCog(commands.Cog, name="Token"):
 
 
     @app_commands.command(name="list_sources", description="ADMIN: Menampilkan semua sumber token yang terkonfigurasi.")
-    @app_commands.check(is_admin_check)
+    @app_commands.check(self.is_admin_check)
     async def list_sources(self, interaction: discord.Interaction):
         embed = discord.Embed(title="🔧 Konfigurasi Sumber Token", color=discord.Color.purple())
         if not self.TOKEN_SOURCES:
@@ -700,7 +700,7 @@ class TokenCog(commands.Cog, name="Token"):
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
     @app_commands.command(name="baca_file", description="ADMIN: Membaca konten file dari sumber token.")
-    @app_commands.check(is_admin_check)
+    @app_commands.check(self.is_admin_check)
     @app_commands.autocomplete(alias=source_alias_autocomplete)
     async def baca_file(self, interaction: discord.Interaction, alias: str):
         await interaction.response.defer(ephemeral=True)
@@ -728,7 +728,7 @@ class TokenCog(commands.Cog, name="Token"):
             await interaction.followup.send(embed=embed, ephemeral=True)
 
     @app_commands.command(name="admin_reset_cooldown", description="ADMIN: Mereset cooldown & token aktif user, lalu kirim DM.")
-    @app_commands.check(is_admin_check)
+    @app_commands.check(self.is_admin_check)
     async def admin_reset_cooldown(self, interaction: discord.Interaction, user: discord.Member):
         await interaction.response.defer(ephemeral=True)
         user_id_str = str(user.id)
@@ -771,7 +771,7 @@ class TokenCog(commands.Cog, name="Token"):
 
 
     @app_commands.command(name="admin_cek_user", description="ADMIN: Memeriksa status token dan cooldown pengguna.")
-    @app_commands.check(is_admin_check)
+    @app_commands.check(self.is_admin_check)
     async def admin_cek_user(self, interaction: discord.Interaction, user: discord.Member):
         await interaction.response.defer(ephemeral=True)
         claims_content, _ = get_github_file(self.PRIMARY_REPO, self.CLAIMS_FILE_PATH, self.GITHUB_TOKEN)
@@ -823,7 +823,7 @@ class TokenCog(commands.Cog, name="Token"):
         await interaction.followup.send(embed=embed, ephemeral=True)
 
     @app_commands.command(name="list_tokens", description="ADMIN: Menampilkan daftar semua token aktif dari database.")
-    @app_commands.check(is_admin_check)
+    @app_commands.check(self.is_admin_check)
     async def list_tokens(self, interaction: discord.Interaction):
         await interaction.response.defer(ephemeral=True)
         guild = interaction.guild
@@ -874,7 +874,7 @@ class TokenCog(commands.Cog, name="Token"):
 
 
     @app_commands.command(name="show_config", description="ADMIN: Menampilkan channel & repo yang terkonfigurasi.")
-    @app_commands.check(is_admin_check)
+    @app_commands.check(self.is_admin_check)
     async def show_config(self, interaction: discord.Interaction):
         embed = discord.Embed(title="🔧 Konfigurasi Bot (Token & Role)", color=discord.Color.teal())
         embed.add_field(name="Repo Utama (claims.json)", value=f"`{self.PRIMARY_REPO}`" if self.PRIMARY_REPO else "Belum diatur", inline=False)
@@ -894,7 +894,7 @@ class TokenCog(commands.Cog, name="Token"):
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
     @app_commands.command(name="serverlist", description="ADMIN: Menampilkan daftar semua server tempat bot ini berada.")
-    @app_commands.check(is_admin_check)
+    @app_commands.check(self.is_admin_check)
     async def serverlist(self, interaction: discord.Interaction):
         server_list = [f"- **{guild.name}** (ID: `{guild.id}` | Members: {guild.member_count})" 
                        for guild in self.bot.guilds]
