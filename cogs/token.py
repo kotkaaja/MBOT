@@ -603,7 +603,7 @@ class TokenCog(commands.Cog, name="Token"):
 
         await ctx.send(f"✅ Token `{token}` ditambahkan ke `{alias}`. Akan aktif hingga <t:{int(expiry_time.timestamp())}:F> (<t:{int(expiry_time.timestamp())}:R>).", delete_after=15)
 
-    @commands.command(name="admin_give_token", help="ADMIN: Berikan token ke user. Usage: !admin_give_token [user] [alias] [token] [durasi]")
+   @commands.command(name="admin_give_token", help="ADMIN: Berikan token ke user. Usage: !admin_give_token [user] [alias] [token] [durasi]")
     @commands.check(is_admin_check_prefix)
     async def admin_give_token(self, ctx: commands.Context, user: discord.Member = None, alias: str = None, token: str = None, durasi: str = None):
         if not user or not alias or not token or not durasi:
@@ -627,23 +627,31 @@ class TokenCog(commands.Cog, name="Token"):
             target_repo_slug, target_file_path = source_info["slug"], source_info["path"]
             
             # =================================================================
-            # PERUBAHAN POIN 1 DIMULAI DI SINI
+            # PERUBAHAN POIN 1 (Modifikasi untuk menangkap SHA baru)
             # =================================================================
-            # 1. Tambah token ke file sumber (jika belum ada)
             tokens_content, tokens_sha = get_github_file(target_repo_slug, target_file_path, self.GITHUB_TOKEN)
             if tokens_content is None:
                  await ctx.send(f"❌ Gagal membaca file token dari `{alias}`.", delete_after=15); return
 
             token_add_success = True # Asumsikan berhasil jika sudah ada
+            token_was_added_now = False # Tandai jika kita yang menambahkannya
+
             if token not in (tokens_content or ""):
                 logger.info(f"Admin {admin.name} menambahkan token baru '{token}' ke source '{alias}' via give_token.")
                 new_tokens_content = (tokens_content or "").strip() + f"\n\n{token}\n\n"
                 token_add_success = update_github_file(target_repo_slug, target_file_path, new_tokens_content, tokens_sha, f"Admin {admin.name}: Add token {token} via give_token", self.GITHUB_TOKEN)
+                token_was_added_now = token_add_success
             
             if not token_add_success:
                 await ctx.send("❌ Gagal menambahkan token ke file sumber GitHub. Operasi dibatalkan.", delete_after=15); return
+
+            # Ambil SHA terbaru HANYA jika kita baru saja mengupdatenya
+            # (Mirip dengan !admin_add_shared)
+            tokens_sha_after_add = tokens_sha
+            if token_was_added_now:
+                 _, tokens_sha_after_add = get_github_file(target_repo_slug, target_file_path, self.GITHUB_TOKEN)
             # =================================================================
-            # PERUBAHAN POIN 1 SELESAI DI SINI
+            # PERUBAHAN POIN 1 SELESAI
             # =================================================================
 
             # 2. Update claims.json untuk user
@@ -673,9 +681,38 @@ class TokenCog(commands.Cog, name="Token"):
             
             claim_db_update_success = update_github_file(self.PRIMARY_REPO, self.CLAIMS_FILE_PATH, json.dumps(claims_data, indent=4), claims_sha, f"Admin {admin.name}: Assign token {token} to {user.name}", self.GITHUB_TOKEN)
             
+            # =================================================================
+            # PERUBAHAN POIN 2 (Menambahkan Rollback Logic)
+            # =================================================================
             if not claim_db_update_success:
-                await ctx.send(f"❌ Gagal menyimpan data pemberian token untuk {user.mention} ke database klaim.", delete_after=15)
+                await ctx.send(f"❌ Gagal menyimpan data pemberian token untuk {user.mention} ke database klaim. Memulai rollback...", delete_after=15)
+                
+                # Hanya rollback jika kita yang menambahkan token tadi
+                if token_was_added_now:
+                    logger.critical(f"KRITIS: Gagal menyimpan data klaim untuk admin_give_token {user.name}. Melakukan rollback dari file sumber.")
+                    # Ambil konten TERBARU lagi (meskipun kita punya SHA-nya)
+                    current_tokens_content_rb, current_tokens_sha_rb = get_github_file(target_repo_slug, target_file_path, self.GITHUB_TOKEN)
+                    
+                    # Gunakan SHA yang kita dapatkan setelah menambahkannya (tokens_sha_after_add)
+                    # Jika current_tokens_sha_rb tidak null, gunakan itu, jika tidak, fallback ke tokens_sha_after_add
+                    sha_for_rollback = current_tokens_sha_rb if current_tokens_sha_rb else tokens_sha_after_add
+
+                    if current_tokens_content_rb and token in current_tokens_content_rb:
+                        lines = [line for line in current_tokens_content_rb.split('\n\n') if line.strip() and line.strip() != token]
+                        content_after_removal = "\n\n".join(lines) + ("\n\n" if lines else "")
+                        rollback_success = update_github_file(target_repo_slug, target_file_path, content_after_removal, sha_for_rollback, f"Admin {admin.name}: ROLLBACK admin_give_token {token}", self.GITHUB_TOKEN)
+                        logger.info(f"Status Rollback admin_give_token '{token}': {'Berhasil' if rollback_success else 'Gagal'}")
+                        await ctx.send(f"ℹ️ Rollback token `{token}` dari file sumber: {'Berhasil' if rollback_success else 'Gagal'}.", delete_after=15)
+                    else:
+                         logger.error(f"Gagal rollback admin_give_token: Token '{token}' tidak ditemukan di konten terbaru.")
+                         await ctx.send(f"ℹ️ Gagal rollback, token `{token}` tidak ditemukan di file sumber.", delete_after=15)
+                else:
+                    logger.warning(f"Gagal menyimpan data klaim untuk admin_give_token {user.name}, tapi token sudah ada di file sumber sebelumnya (tidak ada rollback).")
+                    await ctx.send(f"ℹ️ Token sudah ada di file sumber sebelumnya (tidak ada rollback).", delete_after=15)
                 return
+            # =================================================================
+            # PERUBAHAN POIN 2 SELESAI
+            # =================================================================
 
         # 3. Kirim DM ke User (di luar lock)
         try:
