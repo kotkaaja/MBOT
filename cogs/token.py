@@ -603,7 +603,7 @@ class TokenCog(commands.Cog, name="Token"):
 
         await ctx.send(f"✅ Token `{token}` ditambahkan ke `{alias}`. Akan aktif hingga <t:{int(expiry_time.timestamp())}:F> (<t:{int(expiry_time.timestamp())}:R>).", delete_after=15)
 
-   @commands.command(name="admin_give_token", help="ADMIN: Berikan token ke user. Usage: !admin_give_token [user] [alias] [token] [durasi]")
+    @commands.command(name="admin_give_token", help="ADMIN: Berikan token ke user. Usage: !admin_give_token [user] [alias] [token] [durasi]")
     @commands.check(is_admin_check_prefix)
     async def admin_give_token(self, ctx: commands.Context, user: discord.Member = None, alias: str = None, token: str = None, durasi: str = None):
         if not user or not alias or not token or not durasi:
@@ -732,19 +732,6 @@ class TokenCog(commands.Cog, name="Token"):
         except Exception as e:
             logger.error(f"Error tidak dikenal saat kirim DM pemberian token: {e}")
             await ctx.send(f"✅ Token `{token}` berhasil diberikan kepada {user.mention}, namun gagal mengirim notifikasi DM karena error.", delete_after=15)
-
-    @commands.command(name="list_sources", help="ADMIN: Menampilkan semua sumber token. Usage: !list_sources")
-    @commands.check(is_admin_check_prefix)
-    async def list_sources(self, ctx: commands.Context):
-        embed = discord.Embed(title="🔧 Konfigurasi Sumber Token", color=discord.Color.purple())
-        if not self.TOKEN_SOURCES:
-            embed.description = "Variabel `TOKEN_SOURCES` belum diatur."
-        else:
-            desc = []
-            for alias, info in self.TOKEN_SOURCES.items():
-                 desc.append(f"**Alias:** `{alias.title()}`\n**Repo:** `{info['slug']}`\n**File:** `{info['path']}`")
-            embed.description = "\n\n".join(desc)
-        await ctx.send(embed=embed)
 
     # =================================================================
     # PERUBAHAN POIN 2 DIMULAI DI SINI
