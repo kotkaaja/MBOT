@@ -303,7 +303,7 @@ class TokenCog(commands.Cog, name="Token"):
             keys_to_process = list(claims_data.keys())
             tokens_to_remove_by_source = {}
             claims_updated = False
-            # users_to_notify_cooldown_end = [] # DIHAPUS SESUAI REQUEST
+            # users_to_notify_cooldown_end = [] # DIHAPUS SESUAI REQUEST (Poin 3)
 
             for key in keys_to_process:
                 # Hanya proses user IDs untuk token expired (non-shared)
@@ -340,7 +340,7 @@ class TokenCog(commands.Cog, name="Token"):
                                             next_claim_time_str = "Anda sudah bisa klaim lagi."
                                     except ValueError: pass
 
-                                # Kirim notifikasi kedaluwarsa DENGAN status cooldown
+                                # Kirim notifikasi kedaluwarsa DENGAN status cooldown (Sesuai Poin 3)
                                 member = self.bot.get_user(user_id_int)
                                 if member:
                                     try:
@@ -384,7 +384,8 @@ class TokenCog(commands.Cog, name="Token"):
                         except ValueError:
                             logger.warning(f"Format expiry timestamp tidak valid untuk shared token {key}.")
 
-                # 2. Cek Cooldown Selesai & Notifikasi (DIHAPUS SESUAI REQUEST)
+                # 2. Cek Cooldown Selesai & Notifikasi (DIHAPUS SESUAI REQUEST - Poin 3)
+                # Tidak ada kode di sini, notifikasi cooldown selesai hanya via command !notifycooldowns
 
             # Proses Penghapusan Token dari File Sumber
             if claims_updated:
@@ -411,7 +412,7 @@ class TokenCog(commands.Cog, name="Token"):
             else:
                  logger.info("Tidak ada token kedaluwarsa yang perlu dibersihkan.")
 
-        # Kirim Notifikasi Cooldown Selesai (DIHAPUS SESUAI REQUEST)
+        # Kirim Notifikasi Cooldown Selesai (DIHAPUS SESUAI REQUEST - Poin 3)
 
 
     @cleanup_expired_tokens.before_loop
@@ -625,12 +626,25 @@ class TokenCog(commands.Cog, name="Token"):
         async with self.bot.github_lock:
             target_repo_slug, target_file_path = source_info["slug"], source_info["path"]
             
-            # 1. Pastikan token ADA di file sumber
-            tokens_content, _ = get_github_file(target_repo_slug, target_file_path, self.GITHUB_TOKEN)
+            # =================================================================
+            # PERUBAHAN POIN 1 DIMULAI DI SINI
+            # =================================================================
+            # 1. Tambah token ke file sumber (jika belum ada)
+            tokens_content, tokens_sha = get_github_file(target_repo_slug, target_file_path, self.GITHUB_TOKEN)
             if tokens_content is None:
                  await ctx.send(f"❌ Gagal membaca file token dari `{alias}`.", delete_after=15); return
-            if not tokens_content or token not in tokens_content.split():
-                await ctx.send(f"❌ Token `{token}` tidak ditemukan di file sumber `{alias}`. Tambahkan dulu jika perlu.", delete_after=15); return
+
+            token_add_success = True # Asumsikan berhasil jika sudah ada
+            if token not in (tokens_content or ""):
+                logger.info(f"Admin {admin.name} menambahkan token baru '{token}' ke source '{alias}' via give_token.")
+                new_tokens_content = (tokens_content or "").strip() + f"\n\n{token}\n\n"
+                token_add_success = update_github_file(target_repo_slug, target_file_path, new_tokens_content, tokens_sha, f"Admin {admin.name}: Add token {token} via give_token", self.GITHUB_TOKEN)
+            
+            if not token_add_success:
+                await ctx.send("❌ Gagal menambahkan token ke file sumber GitHub. Operasi dibatalkan.", delete_after=15); return
+            # =================================================================
+            # PERUBAHAN POIN 1 SELESAI DI SINI
+            # =================================================================
 
             # 2. Update claims.json untuk user
             claims_content, claims_sha = get_github_file(self.PRIMARY_REPO, self.CLAIMS_FILE_PATH, self.GITHUB_TOKEN)
@@ -695,34 +709,49 @@ class TokenCog(commands.Cog, name="Token"):
             embed.description = "\n\n".join(desc)
         await ctx.send(embed=embed)
 
+    # =================================================================
+    # PERUBAHAN POIN 2 DIMULAI DI SINI
+    # =================================================================
     @commands.command(name="baca_file", help="ADMIN: Membaca konten file dari sumber token. Usage: !baca_file [alias]")
     @commands.check(is_admin_check_prefix)
     async def baca_file(self, ctx: commands.Context, alias: str = None):
+        # Hapus command asli untuk privasi
+        try:
+            await ctx.message.delete()
+        except discord.HTTPException:
+            pass # Gagal hapus tidak masalah, lanjut saja
+
         if not alias:
-            await ctx.send("❌ Usage: `!baca_file [alias_sumber]`", delete_after=15); return
+            await ctx.author.send("❌ Usage: `!baca_file [alias_sumber]`"); return
 
         alias_lower = alias.lower()
         source_info = self.TOKEN_SOURCES.get(alias_lower)
         if not source_info:
-            await ctx.send(f"❌ Alias `{alias}` tidak valid.", delete_after=15); return
-            
-        await ctx.message.add_reaction('⏳')
+            await ctx.author.send(f"❌ Alias `{alias}` tidak valid."); return
+        
         content, _ = get_github_file(source_info["slug"], source_info["path"], self.GITHUB_TOKEN)
+        
         if content is None:
-            await ctx.send(f"❌ File `{source_info['path']}` tidak ditemukan di repo `{source_info['slug']}`.", delete_after=15); return
+            await ctx.author.send(f"❌ File `{source_info['path']}` tidak ditemukan di repo `{source_info['slug']}`."); return
         if not content.strip():
-             await ctx.send(f"ℹ️ File `{alias}` kosong.", delete_after=15); return
+             await ctx.author.send(f"ℹ️ File `{alias}` kosong."); return
             
         if len(content) > 1900:
             try:
                 file = discord.File(io.StringIO(content), filename=f"{alias_lower}_content.txt")
-                await ctx.send(f"📄 Konten dari `{alias}` (terlalu panjang, dikirim sebagai file):", file=file)
+                await ctx.author.send(f"📄 Konten dari `{alias}` (terlalu panjang, dikirim sebagai file):", file=file)
             except Exception as e:
-                 await ctx.send(f"❌ Gagal mengirim file: {e}", delete_after=15)
+                 await ctx.author.send(f"❌ Gagal mengirim file: {e}")
         else:
             embed = discord.Embed(title=f"📄 Konten dari `{alias}`", description=f"```\n{content}\n```", color=discord.Color.blue())
             embed.set_footer(text=f"Repo: {source_info['slug']}, File: {source_info['path']}")
-            await ctx.send(embed=embed)
+            await ctx.author.send(embed=embed)
+        
+        # Kirim konfirmasi singkat ke channel (ephemeral-like)
+        await ctx.send(f"✅ Hasil `!baca_file {alias}` telah dikirim ke DM Anda.", delete_after=10)
+    # =================================================================
+    # PERUBAHAN POIN 2 SELESAI DI SINI
+    # =================================================================
 
     @commands.command(name="admin_reset_user", help="ADMIN: Mereset cooldown & token aktif user. Usage: !admin_reset_user [user]")
     @commands.check(is_admin_check_prefix)
