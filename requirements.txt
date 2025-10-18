@@ -10,3 +10,4 @@ yt-dlp
 pydub
 psycopg2-binary
 spotdl
+requests
