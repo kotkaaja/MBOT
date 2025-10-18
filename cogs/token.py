@@ -269,7 +269,9 @@ class TokenCog(commands.Cog, name="Token"):
                         if token and alias and alias in self.TOKEN_SOURCES:
                             if alias not in tokens_to_remove_by_source:
                                 tokens_to_remove_by_source[alias] = {"slug": self.TOKEN_SOURCES[alias]["slug"], "path": self.TOKEN_SOURCES[alias]["path"], "tokens": set()}
-                            tokens_to_remove_by_source[alias]["tokens'].add(token)
+                            # --- [INI ADALAH PERBAIKANNYA] ---
+                            tokens_to_remove_by_source[alias]["tokens"].add(token)
+                            # ----------------------------------
 
                         if key.startswith("shared_"): del claims_data[key]
                         else:
@@ -297,8 +299,6 @@ class TokenCog(commands.Cog, name="Token"):
         await self.bot.wait_until_ready()
 
     # --- PERINTAH SLASH COMMAND (ADMIN) ---
-    # (Semua slash command dari /open_claim hingga /serverlist ada di sini, tidak berubah)
-    # ... (Saya singkat di sini agar tidak terlalu panjang, tapi semua perintah ada)
 
     @app_commands.command(name="open_claim", description="ADMIN: Membuka sesi klaim untuk sumber token tertentu.")
     @app_commands.check(is_admin_check)
