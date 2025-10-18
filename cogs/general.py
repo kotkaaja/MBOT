@@ -43,19 +43,9 @@ class GeneralCog(commands.Cog, name="General"):
         
         # --- Fitur Token (Dipisah) ---
         embed.add_field(
-            name="💎 Fitur Token (GitHub)",
+            name="💎 Fitur Token",
             value=(
-                "Klaim token berbasis GitHub.\n\n"
-                "**Perintah Pengguna (Slash Command):**\n"
-                "Gunakan tombol di channel klaim untuk:\n"
-                "• `Claim Token`: Mengklaim token berdasarkan role Anda (cooldown 7 hari).\n"
-                "• `Cek Token Saya`: Melihat status token aktif dan cooldown Anda.\n\n"
-                "**Perintah Admin (Slash Command):**\n"
-                "• `/open_claim [alias]`: Membuka sesi klaim.\n"
-                "• `/close_claim`: Menutup sesi klaim.\n"
-                "• `/admin_add_token [alias] [token]`: Menambah token manual.\n"
-                "• `/admin_reset_cooldown [user]`: Mereset cooldown klaim user.\n"
-                "• `...dan banyak lagi (ketik / untuk melihat semua).`"
+                "!helptoken atau !help_token"
             ),
             inline=False
         )
