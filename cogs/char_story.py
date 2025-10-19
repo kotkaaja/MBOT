@@ -7,6 +7,7 @@ from typing import Dict
 import io
 import json
 import os
+import asyncio # Diperlukan untuk wait_for
 
 # Import fungsi database untuk cooldown
 from utils.database import check_char_story_cooldown, set_char_story_cooldown
@@ -268,41 +269,6 @@ class CSPanelView(ui.View):
 
 
 # ============================
-# MODAL UNTUK PERINTAH ADMIN
-# ============================
-class AddServerModal(ui.Modal):
-    server_name = ui.TextInput(label="Nama Tampilan Server", placeholder="Contoh: SSRP, Virtual RP", style=discord.TextStyle.short, required=True)
-    rules = ui.TextInput(label="Rules (Gunakan \\n untuk baris baru)", placeholder="Contoh: - Minimal 4 paragraf.\\n- Wajib baku.", style=discord.TextStyle.paragraph, required=True)
-    server_format = ui.TextInput(label="Format (Gunakan \\n untuk baris baru)", placeholder="Contoh: **Format CS**\\n- Nama: {nama_char}\\n- Story:\\n{story}", style=discord.TextStyle.paragraph, required=True)
-
-    def __init__(self, server_key: str):
-        super().__init__(title=f"Tambah/Edit Server: {server_key}")
-        self.server_key = server_key
-
-    async def on_submit(self, interaction: discord.Interaction):
-        await interaction.response.defer(ephemeral=True)
-        
-        # Ganti escape \\n menjadi newline \n
-        cleaned_rules = self.rules.value.replace("\\n", "\n")
-        cleaned_format = self.server_format.value.replace("\\n", "\n")
-
-        new_data = {
-            "name": self.server_name.value,
-            "rules": cleaned_rules,
-            "format": cleaned_format
-        }
-
-        configs = load_server_config()
-        action = "diperbarui" if self.server_key in configs else "ditambahkan"
-        configs[self.server_key] = new_data
-
-        if save_server_config(configs):
-            await interaction.followup.send(f"✅ Server `{self.server_key}` (Nama: {self.server_name.value}) berhasil {action}.", ephemeral=True)
-        else:
-            await interaction.followup.send(f"❌ Gagal menyimpan konfigurasi ke {SERVER_CONFIG_FILE}.", ephemeral=True)
-
-
-# ============================
 # KELAS COG UTAMA
 # ============================
 class CharacterStoryCog(commands.Cog, name="CharacterStory"):
@@ -399,16 +365,56 @@ class CharacterStoryCog(commands.Cog, name="CharacterStory"):
     # ============================
     # PERINTAH ADMIN BARU
     # ============================
+    
     @commands.command(name="addserver")
     @commands.has_permissions(administrator=True)
-    async def add_server_command(self, ctx, server_key: str):
+    async def add_server_command(self, ctx: commands.Context, server_key: str):
         """[ADMIN] Menambah atau mengedit server di konfigurasi CS."""
         server_key = server_key.lower().strip()
         if not server_key:
             await ctx.send("❌ Key tidak boleh kosong. Contoh: `!addserver ssrp`")
             return
-            
-        await ctx.send_modal(AddServerModal(server_key))
+
+        # Fungsi check untuk memastikan pesan balasan berasal dari user yang sama di channel yang sama
+        def check(m: discord.Message):
+            return m.author == ctx.author and m.channel == ctx.channel
+
+        try:
+            # 1. Dapatkan Nama Tampilan
+            await ctx.send(f"➡️ **(1/3)** | Masukkan **Nama Tampilan** untuk server `{server_key}`:\n*(Contoh: SSRP, Virtual RP)*")
+            msg_name = await self.bot.wait_for('message', check=check, timeout=300.0)
+            server_name_val = msg_name.content
+
+            # 2. Dapatkan Rules
+            await ctx.send(f"➡️ **(2/3)** | Masukkan **Rules** untuk `{server_key}`:\n*(Gunakan `\\n` untuk baris baru. Contoh: `- Minimal 4 paragraf.\\n- Wajib baku.`)*")
+            msg_rules = await self.bot.wait_for('message', check=check, timeout=600.0) # Timeout lebih lama untuk input kompleks
+            cleaned_rules = msg_rules.content.replace("\\n", "\n")
+
+            # 3. Dapatkan Format
+            await ctx.send(f"➡️ **(3/3)** | Masukkan **Format** untuk `{server_key}`:\n*(Gunakan `{{nama_char}}`, `{{story}}`, dll. dan `\\n` untuk baris baru)*")
+            msg_format = await self.bot.wait_for('message', check=check, timeout=600.0) # Timeout lebih lama
+            cleaned_format = msg_format.content.replace("\\n", "\n")
+
+            # Semua data terkumpul, lanjutkan penyimpanan
+            new_data = {
+                "name": server_name_val,
+                "rules": cleaned_rules,
+                "format": cleaned_format
+            }
+
+            configs = load_server_config()
+            action = "diperbarui" if server_key in configs else "ditambahkan"
+            configs[server_key] = new_data
+
+            if save_server_config(configs):
+                await ctx.send(f"✅ Server `{server_key}` (Nama: {server_name_val}) berhasil {action}.")
+            else:
+                await ctx.send(f"❌ Gagal menyimpan konfigurasi ke {SERVER_CONFIG_FILE}.")
+
+        except asyncio.TimeoutError:
+            await ctx.send(f"❌ Waktu habis. Proses `!addserver` untuk `{server_key}` dibatalkan.")
+        except Exception as e:
+            await ctx.send(f"❌ Terjadi error tak terduga: {e}")
 
     @commands.command(name="delserver")
     @commands.has_permissions(administrator=True)
@@ -429,7 +435,7 @@ class CharacterStoryCog(commands.Cog, name="CharacterStory"):
         else:
             await ctx.send(f"❌ Gagal menyimpan perubahan ke `{SERVER_CONFIG_FILE}`.")
             
-    @commands.command(name="listservers")
+    @commands.command(name="csserver") # NAMA DIPERBARUI
     @commands.has_permissions(administrator=True)
     async def list_servers_command(self, ctx):
         """[ADMIN] Menampilkan daftar server CS yang terkonfigurasi."""
