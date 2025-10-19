@@ -5,6 +5,8 @@ from openai import AsyncOpenAI
 import logging
 from typing import Dict
 import io
+import json
+import os
 
 # Import fungsi database untuk cooldown
 from utils.database import check_char_story_cooldown, set_char_story_cooldown
@@ -13,86 +15,36 @@ from utils.database import check_char_story_cooldown, set_char_story_cooldown
 logger = logging.getLogger(__name__)
 
 # ============================
-# DICTIONARY UNTUK PROMPT DAN FORMAT
+# MANAJEMEN KONFIGURASI SERVER (JSON)
 # ============================
 
-# Menyimpan aturan spesifik dan format untuk setiap server
-SERVER_CONFIG = {
-    "ssrp": {
-        "name": "SSRP",
-        "rules": """- Cerita harus memiliki minimal 4 paragraf dan 3 kalimat di setiap paragraf.
-- Gunakan 5 spasi di awal setiap paragraf.
-- Tulis tanggal lahir dalam format 'DD Bulan YYYY'.
-- Gunakan huruf kapital hanya pada nama orang, nama tempat, dan awal kalimat.
-- Gunakan Bahasa Indonesia yang baku dan sesuai KBBI.
-- Jangan gunakan garis bawah (_) pada nama karakter dalam cerita. Contoh salah: Muriel_Bagge, contoh benar: Muriel Bagge.
-- Pastikan penggunaan tanda baca (titik dan koma) tepat.""",
-        "format": """**__FORMAT REQUEST CS | SSRP__**
-- Nama karakter : {nama_char}
-- Level karakter : {level}
-- Jenis kelamin karakter : {jenis_kelamin}
-- Tempat, tanggal lahir karakter : {kota_asal}, {tanggal_lahir}
-- Screenshot /stats : (Lampirkan manual)
-STORY :
+SERVER_CONFIG_FILE = 'char_story_servers.json'
 
-{story}"""
-    },
-    "virtual_rp": {
-        "name": "Virtual RP",
-        "rules": """- Cerita harus memiliki minimal 250 suku kata.
-- Umur karakter minimal 17 tahun.
-- Beri jarak antar paragraf.
-- Cerita minimal 4 paragraf, dan 1 paragraf minimal 4 baris.
-- Gunakan Bahasa Indonesia yang baku dan sesuai KBBI.
-- Perhatikan penggunaan huruf kapital dan tanda baca (beri spasi setelah titik/koma).
-- Jangan menyalin story orang lain.
-- Jangan gunakan garis bawah (_) pada nama karakter dalam cerita. Contoh salah: Muriel_Bagge, contoh benar: Muriel Bagge.
-- Tulis tanggal lahir dalam format 'DD Bulan YYYY'.""",
-        "format": """**__FORMAT CHARACTER STORY__**
-> NAMA UCP : (Isi manual)
-> NAMA IC : {nama_char}
-> UMUR SESUAI KTP IC : (Isi manual)
-> TEMPAT & TANGGAL LAHIR IC : {kota_asal}, {tanggal_lahir}
-> CHARACTER SLOT : (Isi manual)
-> SS KTP IC : (Lampirkan manual)
+def load_server_config() -> Dict:
+    """Memuat konfigurasi server dari file JSON."""
+    if not os.path.exists(SERVER_CONFIG_FILE):
+        logger.warning(f"{SERVER_CONFIG_FILE} tidak ditemukan. Membuat file kosong.")
+        save_server_config({}) # Buat file kosong jika tidak ada
+        return {}
+    try:
+        with open(SERVER_CONFIG_FILE, 'r', encoding='utf-8') as f:
+            return json.load(f)
+    except json.JSONDecodeError:
+        logger.error(f"Gagal mem-parsing {SERVER_CONFIG_FILE}. File mungkin rusak.")
+        return {}
+    except Exception as e:
+        logger.error(f"Gagal memuat {SERVER_CONFIG_FILE}: {e}")
+        return {}
 
-STORY :
-
-{story}"""
-    },
-    "aarp": {
-        "name": "AARP",
-        "rules": """- Gunakan Bahasa Indonesia yang baku.
-- Jangan gunakan garis bawah (_) pada nama karakter dalam cerita. Contoh salah: Muriel_Bagge, contoh benar: Muriel Bagge.
-- Cerita minimal 1 paragraf atau lebih, singkat dan jelas.""",
-        "format": """**__[Format Character Story]__**
-- Nama [ IC ] : {nama_char}
-- JENIS KELAMIN : {jenis_kelamin}
-- KOTA KELAHIRAN : {kota_asal}
-- TANGGAL LAHIR : {tanggal_lahir}
-- SS STATS PLAYER : (Lampirkan manual)
-
-Story :
-
-{story}"""
-    },
-    "gcrp": {
-        "name": "GCRP",
-        "rules": """- Minimal 4 paragraf dan setiap paragraf minimal memiliki 4 baris.
-- Menggunakan bahasa Indonesia yang baku.
-- Alur cerita yang jelas dan tidak berbelit-belit.
-- Dilarang keras menjiplak/copy paste cerita orang lain.
-- Penulisan nama karakter tidak menggunakan garis bawah (_). Contoh salah: Muriel_Bagge, contoh benar: Muriel Bagge.""",
-        "format": """**[GCRP] FORMAT CHARACTER STORY**
-* Nama UCP: (Isi Manual)
-* Nama Character: {nama_char}
-* Umur: (Isi Manual)
-* Latar Belakang Cerita:
-
-{story}"""
-    }
-}
-
+def save_server_config(data: Dict) -> bool:
+    """Menyimpan data konfigurasi server ke file JSON."""
+    try:
+        with open(SERVER_CONFIG_FILE, 'w', encoding='utf-8') as f:
+            json.dump(data, f, indent=4, ensure_ascii=False)
+        return True
+    except Exception as e:
+        logger.error(f"Gagal menyimpan ke {SERVER_CONFIG_FILE}: {e}")
+        return False
 
 # ============================
 # UI COMPONENTS (MODAL & VIEWS)
@@ -117,6 +69,12 @@ class CSInputModal_Part2(ui.Modal):
         
         # Kirim pesan bahwa proses sedang berjalan
         processing_msg = await interaction.followup.send(f"⏳ Character Story untuk **{self.part1_data['nama_char']}** sedang diproses oleh AI...")
+        
+        # Muat konfigurasi terbaru
+        SERVER_CONFIGS = load_server_config()
+        if self.server not in SERVER_CONFIGS:
+            await processing_msg.edit(content="❌ Error: Konfigurasi server tidak ditemukan. Mungkin baru saja dihapus. Coba lagi.")
+            return
 
         try:
             # Gabungkan data dari formulir bagian 1 dan 2
@@ -130,10 +88,10 @@ class CSInputModal_Part2(ui.Modal):
             })
 
             # Panggil AI untuk menghasilkan cerita
-            story_text = await self.bot.get_cog("CharacterStory").generate_story_from_ai(**all_data)
+            story_text = await self.bot.get_cog("CharacterStory").generate_story_from_ai(SERVER_CONFIGS, **all_data)
 
             # Format output sesuai server
-            server_format = SERVER_CONFIG[self.server]["format"]
+            server_format = SERVER_CONFIGS[self.server]["format"]
             final_cs = server_format.format(
                 nama_char=all_data['nama_char'],
                 tanggal_lahir=all_data['tanggal_lahir'],
@@ -149,7 +107,7 @@ class CSInputModal_Part2(ui.Modal):
                 description="Cerita Anda telah berhasil dibuat. Silakan unduh file `.txt` di bawah ini dan lengkapi bagian yang diperlukan.",
                 color=discord.Color.green()
             )
-            embed.add_field(name="Server", value=SERVER_CONFIG[self.server]['name'], inline=True)
+            embed.add_field(name="Server", value=SERVER_CONFIGS[self.server]['name'], inline=True)
             embed.add_field(name="Sisi Cerita", value=self.story_type.replace("_", " ").title(), inline=True)
             embed.set_footer(text=f"Diminta oleh: {interaction.user.display_name}")
 
@@ -232,7 +190,6 @@ class CSInputModal_Part1(ui.Modal):
             ephemeral=True
         )
 
-
 # View untuk memilih tipe cerita (Goodside/Badside)
 class StoryTypeView(ui.View):
     def __init__(self, server: str, bot_instance):
@@ -254,19 +211,42 @@ class ServerSelectionView(ui.View):
         super().__init__(timeout=180) 
         self.bot = bot_instance
 
-    @ui.select(
-        placeholder="Pilih server tujuan...",
-        options=[
-            discord.SelectOption(label="SSRP", value="ssrp", description="Buat CS untuk server SSRP."),
-            discord.SelectOption(label="Virtual RP", value="virtual_rp", description="Buat CS untuk server Virtual RP."),
-            discord.SelectOption(label="AARP", value="aarp", description="Buat CS untuk server AARP."),
-            discord.SelectOption(label="GCRP", value="gcrp", description="Buat CS untuk server GCRP."),
-        ],
-        custom_id="server_select"
-    )
-    async def select_server(self, interaction: discord.Interaction, select: ui.Select):
-        server_choice = select.values[0]
+        # === PERUBAHAN DI SINI ===
+        # Muat opsi server secara dinamis dari file JSON
+        configs = load_server_config()
+        if not configs:
+            # Jika tidak ada server, tampilkan pesan error di tombol
+            options = [discord.SelectOption(label="Error: Tidak ada server dikonfigurasi", value="error_no_server", emoji="❌")]
+        else:
+            options = [
+                discord.SelectOption(
+                    label=data.get("name", key.title()), # Ambil nama, fallback ke key
+                    value=key, 
+                    description=f"Buat CS untuk server {data.get('name', key.title())}."
+                ) for key, data in configs.items()
+            ]
+
+        # Buat komponen select dengan opsi dinamis
+        self.server_select = ui.Select(
+            placeholder="Pilih server tujuan...",
+            options=options,
+            custom_id="server_select"
+        )
+        # Tambahkan callback ke komponen
+        self.server_select.callback = self.select_server_callback
+        # Tambahkan komponen ke view
+        self.add_item(self.server_select)
+
+    async def select_server_callback(self, interaction: discord.Interaction):
+        """Callback yang dijalankan saat server dipilih."""
+        server_choice = self.server_select.values[0]
+        
+        if server_choice == "error_no_server":
+            await interaction.response.send_message("❌ Gagal memuat server. Hubungi Admin.", ephemeral=True)
+            return
+
         await interaction.response.send_message("Pilih alur cerita untuk karaktermu:", view=StoryTypeView(server=server_choice, bot_instance=self.bot), ephemeral=True)
+
 
 # View utama yang berisi tombol untuk memulai proses
 class CSPanelView(ui.View):
@@ -286,6 +266,42 @@ class CSPanelView(ui.View):
             
         await interaction.response.send_message("Pilih server di mana karaktermu akan bermain:", view=ServerSelectionView(self.bot), ephemeral=True)
 
+
+# ============================
+# MODAL UNTUK PERINTAH ADMIN
+# ============================
+class AddServerModal(ui.Modal):
+    server_name = ui.TextInput(label="Nama Tampilan Server", placeholder="Contoh: SSRP, Virtual RP", style=discord.TextStyle.short, required=True)
+    rules = ui.TextInput(label="Rules (Gunakan \\n untuk baris baru)", placeholder="Contoh: - Minimal 4 paragraf.\\n- Wajib baku.", style=discord.TextStyle.paragraph, required=True)
+    server_format = ui.TextInput(label="Format (Gunakan \\n untuk baris baru)", placeholder="Contoh: **Format CS**\\n- Nama: {nama_char}\\n- Story:\\n{story}", style=discord.TextStyle.paragraph, required=True)
+
+    def __init__(self, server_key: str):
+        super().__init__(title=f"Tambah/Edit Server: {server_key}")
+        self.server_key = server_key
+
+    async def on_submit(self, interaction: discord.Interaction):
+        await interaction.response.defer(ephemeral=True)
+        
+        # Ganti escape \\n menjadi newline \n
+        cleaned_rules = self.rules.value.replace("\\n", "\n")
+        cleaned_format = self.server_format.value.replace("\\n", "\n")
+
+        new_data = {
+            "name": self.server_name.value,
+            "rules": cleaned_rules,
+            "format": cleaned_format
+        }
+
+        configs = load_server_config()
+        action = "diperbarui" if self.server_key in configs else "ditambahkan"
+        configs[self.server_key] = new_data
+
+        if save_server_config(configs):
+            await interaction.followup.send(f"✅ Server `{self.server_key}` (Nama: {self.server_name.value}) berhasil {action}.", ephemeral=True)
+        else:
+            await interaction.followup.send(f"❌ Gagal menyimpan konfigurasi ke {SERVER_CONFIG_FILE}.", ephemeral=True)
+
+
 # ============================
 # KELAS COG UTAMA
 # ============================
@@ -295,8 +311,11 @@ class CharacterStoryCog(commands.Cog, name="CharacterStory"):
         if not hasattr(bot, 'persistent_views_added') or not bot.persistent_views_added:
             bot.add_view(CSPanelView(bot))
             bot.persistent_views_added = True
+        
+        # Panggil load_server_config saat init untuk memastikan file JSON dibuat jika belum ada
+        load_server_config()
 
-    async def generate_story_from_ai(self, server: str, nama_char: str, tanggal_lahir: str, kota_asal: str, story_type: str, bakat: str, culture: str, detail: str, jenis_kelamin: str, level: str) -> str:
+    async def generate_story_from_ai(self, server_configs: Dict, server: str, nama_char: str, tanggal_lahir: str, kota_asal: str, story_type: str, bakat: str, culture: str, detail: str, jenis_kelamin: str, level: str) -> str:
         """Menghasilkan story dari OpenAI berdasarkan input detail."""
         
         if not self.bot.config.OPENAI_API_KEYS:
@@ -305,7 +324,8 @@ class CharacterStoryCog(commands.Cog, name="CharacterStory"):
         api_key = self.bot.config.OPENAI_API_KEYS[0]
         client = AsyncOpenAI(api_key=api_key)
 
-        server_rules = SERVER_CONFIG[server]["rules"]
+        server_rules = server_configs[server]["rules"]
+        server_name = server_configs[server]["name"]
         
         story_direction = ""
         if story_type == "good_side":
@@ -339,7 +359,7 @@ class CharacterStoryCog(commands.Cog, name="CharacterStory"):
         -   **Arah Cerita:** {story_direction}
         -   **Integrasi Bakat:** Jadikan bakat '{bakat}' sebagai pilar utama dalam alur cerita.
 
-        ATURAN TEKNIS WAJIB UNTUK SERVER '{SERVER_CONFIG[server]["name"]}':
+        ATURAN TEKNIS WAJIB UNTUK SERVER '{server_name}':
         {server_rules}
 
         Output akhir harus berupa teks cerita saja dalam Bahasa Indonesia, tanpa judul atau format tambahan. Pastikan cerita yang dihasilkan menarik, konsisten, dan memenuhi semua aturan.
@@ -359,6 +379,7 @@ class CharacterStoryCog(commands.Cog, name="CharacterStory"):
         return cleaned_story
 
     @commands.command(name="setupcs")
+    @commands.has_permissions(administrator=True) # Sebaiknya hanya admin yang bisa setup panel
     async def setup_cs_panel(self, ctx):
         """Mengirim panel untuk membuat Character Story."""
         embed = discord.Embed(
@@ -374,6 +395,57 @@ class CharacterStoryCog(commands.Cog, name="CharacterStory"):
         embed.set_footer(text="Created By Kotkaaja.")
 
         await ctx.send(embed=embed, view=CSPanelView(self.bot))
+
+    # ============================
+    # PERINTAH ADMIN BARU
+    # ============================
+    @commands.command(name="addserver")
+    @commands.has_permissions(administrator=True)
+    async def add_server_command(self, ctx, server_key: str):
+        """[ADMIN] Menambah atau mengedit server di konfigurasi CS."""
+        server_key = server_key.lower().strip()
+        if not server_key:
+            await ctx.send("❌ Key tidak boleh kosong. Contoh: `!addserver ssrp`")
+            return
+            
+        await ctx.send_modal(AddServerModal(server_key))
+
+    @commands.command(name="delserver")
+    @commands.has_permissions(administrator=True)
+    async def delete_server_command(self, ctx, server_key: str):
+        """[ADMIN] Menghapus server dari konfigurasi CS."""
+        server_key = server_key.lower().strip()
+        configs = load_server_config()
+
+        if server_key not in configs:
+            await ctx.send(f"❌ Server dengan key `{server_key}` tidak ditemukan di `{SERVER_CONFIG_FILE}`.")
+            return
+
+        # Hapus server dari dictionary
+        removed_name = configs.pop(server_key, {}).get('name', server_key)
+        
+        if save_server_config(configs):
+            await ctx.send(f"✅ Server `{server_key}` (Nama: {removed_name}) berhasil dihapus dari konfigurasi.")
+        else:
+            await ctx.send(f"❌ Gagal menyimpan perubahan ke `{SERVER_CONFIG_FILE}`.")
+            
+    @commands.command(name="listservers")
+    @commands.has_permissions(administrator=True)
+    async def list_servers_command(self, ctx):
+        """[ADMIN] Menampilkan daftar server CS yang terkonfigurasi."""
+        configs = load_server_config()
+        if not configs:
+            await ctx.send(f"ℹ️ Tidak ada server yang dikonfigurasi di `{SERVER_CONFIG_FILE}`.")
+            return
+
+        embed = discord.Embed(title="Daftar Server Character Story", color=0x3498db)
+        desc = ""
+        for key, data in configs.items():
+            desc += f"- **Key:** `{key}` | **Nama:** {data.get('name', 'N/A')}\n"
+        
+        embed.description = desc
+        await ctx.send(embed=embed)
+
 
 async def setup(bot):
     # Pastikan atribut 'persistent_views_added' ada di bot
