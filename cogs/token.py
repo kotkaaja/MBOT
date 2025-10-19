@@ -361,19 +361,38 @@ class TokenCog(commands.Cog, name="Token"):
                                 member = self.bot.get_user(user_id_int)
                                 if member:
                                     try:
-                                        await member.send(
-                                            f"⏳ Token Anda (`{token}`) telah kedaluwarsa.\n"
-                                            f"Status cooldown: {next_claim_time_str}.\n"
-                                            f"malas nunggu cooldown dan token vip gratis ga karuan?? langsung <#1413805462129741874> aja."
+                                        embed = discord.Embed(
+                                            title="⏳ Token Anda Telah Kedaluwarsa",
+                                            description=f"Token Anda (`{token}`) sudah tidak aktif lagi.",
+                                            color=discord.Color.orange() # Warna oranye/kuning
                                         )
+                                        embed.add_field(
+                                            name="Status Cooldown",
+                                            value=next_claim_time_str,
+                                            inline=False
+                                        )
+                                        embed.add_field(
+                                            name="✨ Mau Lewati Cooldown?",
+                                            value="malas nunggu cooldown dan token vip gratis ga karuan?? langsung <#1413805462129741874> aja.",
+                                            inline=False
+                                        )
+                                        embed.set_footer(text="Notifikasi ini dikirim otomatis.")
+                                        embed.timestamp = datetime.now(timezone.utc)
+                                        
+                                        await member.send(embed=embed)
+                                        # =================================================================
+                                        # AKHIR PERUBAHAN
+                                        # =================================================================
+                                        
                                         logger.info(f"Mengirim notifikasi token expired ke user {key}.")
                                     except discord.Forbidden:
                                         logger.warning(f"Gagal kirim DM expired ke user {key}.")
                                 
+                                # Hapus data token dari claims_data
                                 data.pop("current_token", None)
                                 data.pop("token_expiry_timestamp", None)
                                 data.pop("source_alias", None)
-                                data.pop("assigned_by_admin", None)
+                                data.pop("assigned_by_admin", None) # Hapus juga jika ada
                                 
                         except ValueError:
                              logger.warning(f"Format expiry timestamp tidak valid untuk user {key}. Melewati cek expired.")
@@ -821,11 +840,28 @@ class TokenCog(commands.Cog, name="Token"):
                 logger.info(f"Admin {admin.name} mereset data klaim untuk {user.name} ({user_id_str}).")
                 
                 try:
-                    await user.send(f"⚙️ Data klaim token Anda telah direset oleh admin {admin.mention}.")
-                    await interaction.followup.send(f"✅ Data klaim untuk {user.mention} berhasil direset. Notifikasi DM terkirim.", ephemeral=True)
-                except discord.Forbidden:
-                     await interaction.followup.send(f"✅ Data klaim untuk {user.mention} berhasil direset, namun gagal mengirim notifikasi DM.", ephemeral=True)
+                    embed = discord.Embed(
+                        title="⚙️ Data Klaim Telah Direset",
+                        description=f"Data klaim token Anda telah direset oleh admin {admin.mention}.",
+                        color=discord.Color.orange() # Warna oranye/kuning
+                    )
+                    embed.add_field(
+                        name="Status",
+                        value="Token aktif (jika ada) dan cooldown klaim Anda telah dihapus."
+                    )
+                    embed.add_field(
+                        name="✨ Mau Token VIP Permanen?",
+                        value="malas nunggu cooldown dan token vip gratis ga karuan?? langsung <#1413805462129741874> aja.",
+                        inline=False
+                    )
+                    embed.set_footer(text="Anda sekarang dapat melakukan klaim token baru.")
+                    embed.timestamp = datetime.now(timezone.utc)
 
+                    await user.send(embed=embed)
+                    
+                    await ctx.send(f"✅ Data klaim untuk {user.mention} berhasil direset. Notifikasi DM terkirim.", delete_after=15)
+                except discord.Forbidden:
+                     await ctx.send(f"✅ Data klaim untuk {user.mention} berhasil direset, namun gagal mengirim notifikasi DM.", delete_after=15)
                 if user.id in self.cooldown_notified_users:
                     self.cooldown_notified_users.remove(user.id)
             else:
