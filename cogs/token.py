@@ -623,7 +623,7 @@ class TokenCog(commands.Cog, name="Token"):
 
         await interaction.followup.send(f"✅ Token `{token}` ditambahkan ke `{alias}`. Akan aktif hingga <t:{int(expiry_time.timestamp())}:F> (<t:{int(expiry_time.timestamp())}:R>).", ephemeral=True)
 
-    @app_commands.command(name="give_token", description="[ADMIN] Berikan token ke user tertentu")
+    @app_commands.command(name="give_token", description="[ADMIN] Berikan token ke user (bisa lebih dari 1)")
     @app_commands.describe(user="User yang akan menerima token", alias="Alias sumber token", token="Token yang diberikan", durasi="Durasi aktif (contoh: 7d, 24h)")
     @app_commands.check(is_admin_check_slash)
     async def give_token_slash(self, interaction: discord.Interaction, user: discord.Member, alias: str, token: str, durasi: str):
@@ -637,8 +637,8 @@ class TokenCog(commands.Cog, name="Token"):
         try:
             duration_delta = parse_duration(durasi)
             if duration_delta <= timedelta(0):
-                 await interaction.response.send_message(f"❌ Durasi harus positif.", ephemeral=True)
-                 return
+                await interaction.response.send_message(f"❌ Durasi harus positif.", ephemeral=True)
+                return
         except ValueError as e:
             await interaction.response.send_message(f"❌ Format durasi tidak valid: {e}", ephemeral=True)
             return
@@ -649,8 +649,8 @@ class TokenCog(commands.Cog, name="Token"):
             
             tokens_content, tokens_sha = get_github_file(target_repo_slug, target_file_path, self.GITHUB_TOKEN)
             if tokens_content is None:
-                 await interaction.followup.send(f"❌ Gagal membaca file token dari `{alias}`.", ephemeral=True)
-                 return
+                await interaction.followup.send(f"❌ Gagal membaca file token dari `{alias}`.", ephemeral=True)
+                return
 
             token_add_success = True
             token_was_added_now = False
@@ -667,32 +667,42 @@ class TokenCog(commands.Cog, name="Token"):
 
             tokens_sha_after_add = tokens_sha
             if token_was_added_now:
-                 _, tokens_sha_after_add = get_github_file(target_repo_slug, target_file_path, self.GITHUB_TOKEN)
+                _, tokens_sha_after_add = get_github_file(target_repo_slug, target_file_path, self.GITHUB_TOKEN)
 
             claims_content, claims_sha = get_github_file(self.PRIMARY_REPO, self.CLAIMS_FILE_PATH, self.GITHUB_TOKEN)
             if claims_content is None:
-                 await interaction.followup.send("❌ Gagal membaca database klaim (claims.json).", ephemeral=True)
-                 return
+                await interaction.followup.send("❌ Gagal membaca database klaim (claims.json).", ephemeral=True)
+                return
             claims_data = json.loads(claims_content if claims_content else '{}')
             user_id_str = str(user.id)
             
-            if user_id_str in claims_data and 'current_token' in claims_data[user_id_str]:
-                 try:
-                     expiry_time_existing = datetime.fromisoformat(claims_data[user_id_str]['token_expiry_timestamp'])
-                     if expiry_time_existing > datetime.now(timezone.utc):
-                          logger.warning(f"Admin {admin.name} menimpa token aktif milik {user.name}.")
-                 except ValueError: pass
-
             current_time = datetime.now(timezone.utc)
             expiry_time = current_time + duration_delta
             
-            claims_data[user_id_str] = {
-                **claims_data.get(user_id_str, {}),
-                "current_token": token, 
-                "token_expiry_timestamp": expiry_time.isoformat(), 
+            # === PERUBAHAN: Support Multi-Token ===
+            if user_id_str not in claims_data:
+                claims_data[user_id_str] = {}
+            
+            # Inisialisasi list tokens jika belum ada
+            if 'tokens' not in claims_data[user_id_str]:
+                claims_data[user_id_str]['tokens'] = []
+            
+            # Tambahkan token baru ke list
+            claims_data[user_id_str]['tokens'].append({
+                "token": token,
+                "expiry_timestamp": expiry_time.isoformat(),
                 "source_alias": alias_lower,
                 "assigned_by_admin": admin.id
-            }
+            })
+            
+            # Tetap simpan info untuk kompatibilitas backward (token terakhir)
+            claims_data[user_id_str].update({
+                "current_token": token,
+                "token_expiry_timestamp": expiry_time.isoformat(),
+                "source_alias": alias_lower,
+                "assigned_by_admin": admin.id
+            })
+            # === AKHIR PERUBAHAN ===
             
             claim_db_update_success = update_github_file(self.PRIMARY_REPO, self.CLAIMS_FILE_PATH, json.dumps(claims_data, indent=4), claims_sha, f"Admin {admin.name}: Assign token {token} to {user.name}", self.GITHUB_TOKEN)
             
@@ -712,43 +722,44 @@ class TokenCog(commands.Cog, name="Token"):
                         logger.info(f"Status Rollback admin_give_token '{token}': {'Berhasil' if rollback_success else 'Gagal'}")
                         await interaction.followup.send(f"ℹ️ Rollback token `{token}` dari file sumber: {'Berhasil' if rollback_success else 'Gagal'}.", ephemeral=True)
                     else:
-                         logger.error(f"Gagal rollback admin_give_token: Token '{token}' tidak ditemukan di konten terbaru.")
-                         await interaction.followup.send(f"ℹ️ Gagal rollback, token `{token}` tidak ditemukan di file sumber.", ephemeral=True)
+                        logger.error(f"Gagal rollback admin_give_token: Token '{token}' tidak ditemukan di konten terbaru.")
+                        await interaction.followup.send(f"ℹ️ Gagal rollback, token `{token}` tidak ditemukan di file sumber.", ephemeral=True)
                 else:
                     logger.warning(f"Gagal menyimpan data klaim untuk admin_give_token {user.name}, tapi token sudah ada di file sumber sebelumnya (tidak ada rollback).")
                     await interaction.followup.send(f"ℹ️ Token sudah ada di file sumber sebelumnya (tidak ada rollback).", ephemeral=True)
                 return
 
-        # 3. Kirim DM ke User (di luar lock)
+        # === PERBAIKAN ERROR: Ganti ctx dengan interaction.followup ===
         try:
+            # Hitung total token aktif user
+            total_tokens = len(claims_data[user_id_str].get('tokens', []))
+            
             embed = discord.Embed(
                 title="🎁 Token Diberikan oleh Admin!",
                 description=f"Anda telah diberikan token oleh {admin.mention}.",
-                color=discord.Color.brand_green() # Warna hijau
+                color=discord.Color.brand_green()
             )
             embed.add_field(name="Token Anda", value=f"```{token}```", inline=False)
             embed.add_field(name="Sumber", value=f"`{alias.title()}`", inline=True)
             embed.add_field(name="Aktif Hingga", value=f"<t:{int(expiry_time.timestamp())}:F> (<t:{int(expiry_time.timestamp())}:R>)", inline=True)
-            
-            # Menambahkan promosi VIP
+            embed.add_field(name="Total Token Aktif", value=f"🔑 **{total_tokens} token**", inline=False)
             embed.add_field(
                 name="✨ Mau Token VIP Permanen?",
                 value="malas nunggu cooldown dan token vip gratis ga karuan?? langsung <#1413805462129741874> aja.",
                 inline=False
             )
-            
-            embed.set_footer(text=f"Catatan: Pemberian token ini tidak memengaruhi cooldown klaim normal Anda.")
+            embed.set_footer(text="Catatan: Pemberian token ini tidak memengaruhi cooldown klaim normal Anda.")
             embed.timestamp = datetime.now(timezone.utc)
 
             await user.send(embed=embed)
             logger.info(f"Admin {admin.name} berhasil memberikan token {token} ke {user.name}. DM terkirim.")
-            await ctx.send(f"✅ Token `{token}` berhasil diberikan kepada {user.mention} selama `{durasi}`. Notifikasi DM telah dikirim.", delete_after=15)
+            await interaction.followup.send(f"✅ Token `{token}` berhasil diberikan kepada {user.mention} selama `{durasi}`. Total token aktif: **{total_tokens}**. Notifikasi DM telah dikirim.", ephemeral=True)
         except discord.Forbidden:
             logger.warning(f"Gagal mengirim DM pemberian token ke {user.name} ({user.id}). Token tetap diberikan.")
-            await ctx.send(f"✅ Token `{token}` berhasil diberikan kepada {user.mention}, namun gagal mengirim notifikasi DM.", delete_after=15)
+            await interaction.followup.send(f"✅ Token `{token}` berhasil diberikan kepada {user.mention}, namun gagal mengirim notifikasi DM.", ephemeral=True)
         except Exception as e:
             logger.error(f"Error tidak dikenal saat kirim DM pemberian token: {e}")
-            await ctx.send(f"✅ Token `{token}` berhasil diberikan kepada {user.mention}, namun gagal mengirim notifikasi DM karena error.", delete_after=15)
+            await interaction.followup.send(f"✅ Token `{token}` berhasil diberikan kepada {user.mention}, namun gagal mengirim notifikasi DM karena error.", ephemeral=True)
 
     @app_commands.command(name="read_file", description="[ADMIN] Membaca konten file dari sumber token (kirim via DM)")
     @app_commands.describe(alias="Alias sumber token")
