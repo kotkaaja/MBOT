@@ -164,12 +164,29 @@ class ClaimPanelView(ui.View):
             if not token_add_success:
                 await interaction.followup.send("❌ Gagal membuat token di file sumber. Silakan coba lagi nanti.", ephemeral=True); return
 
-            claims_data[user_id] = {
-                "last_claim_timestamp": current_time.isoformat(), 
-                "current_token": new_token, 
-                "token_expiry_timestamp": expiry_timestamp.isoformat(), 
+           # === PERBAIKAN: Support Multi-Token untuk Claim ===
+            if user_id not in claims_data:
+                claims_data[user_id] = {}
+
+            # Inisialisasi list tokens jika belum ada
+            if 'tokens' not in claims_data[user_id]:
+                claims_data[user_id]['tokens'] = []
+
+            # Tambahkan token baru ke list
+            claims_data[user_id]['tokens'].append({
+                "token": new_token,
+                "expiry_timestamp": expiry_timestamp.isoformat(),
                 "source_alias": source_alias
-            }
+            })
+
+            # Update data untuk kompatibilitas backward
+            claims_data[user_id].update({
+                "last_claim_timestamp": current_time.isoformat(),
+                "current_token": new_token,
+                "token_expiry_timestamp": expiry_timestamp.isoformat(),
+                "source_alias": source_alias
+            })
+            # === AKHIR PERBAIKAN ===
             claim_db_update_success = update_github_file(self.PRIMARY_REPO, self.CLAIMS_FILE_PATH, json.dumps(claims_data, indent=4), claims_sha, f"Bot: Update claim for {user.name}", self.GITHUB_TOKEN)
 
             if not claim_db_update_success:
