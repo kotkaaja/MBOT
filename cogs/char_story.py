@@ -3,11 +3,11 @@ from discord.ext import commands
 from discord import ui
 from openai import AsyncOpenAI
 import logging
-from typing import Dict
+from typing import Dict, Optional
 import io
 import json
 import os
-import asyncio # Diperlukan untuk wait_for
+import asyncio # Diperlukan untuk wait_for, meskipun tidak lagi dipakai di addserver
 
 # Import fungsi database untuk cooldown
 from utils.database import check_char_story_cooldown, set_char_story_cooldown
@@ -269,6 +269,97 @@ class CSPanelView(ui.View):
 
 
 # ============================
+# UI UNTUK PERINTAH ADMIN (PERBAIKAN)
+# ============================
+
+class AddServerModal(ui.Modal):
+    """Modal pop-up untuk menambah/mengedit server."""
+    server_name = ui.TextInput(
+        label="Nama Tampilan Server", 
+        placeholder="Contoh: SSRP, Virtual RP", 
+        style=discord.TextStyle.short, 
+        required=True
+    )
+    rules = ui.TextInput(
+        label="Rules (Tekan Enter untuk baris baru)", 
+        placeholder="Contoh:\n- Minimal 4 paragraf.\n- Wajib baku.", 
+        style=discord.TextStyle.paragraph, 
+        required=True
+    )
+    server_format = ui.TextInput(
+        label="Format (Tekan Enter untuk baris baru)", 
+        placeholder="Contoh:\n**Format CS**\n- Nama: {nama_char}\n- Story:\n{story}", 
+        style=discord.TextStyle.paragraph, 
+        required=True
+    )
+
+    def __init__(self, server_key: str):
+        super().__init__(title=f"Tambah/Edit Server: {server_key}")
+        self.server_key = server_key
+        
+        # Coba isi data jika server sudah ada (untuk edit)
+        configs = load_server_config()
+        if server_key in configs:
+            data = configs[server_key]
+            self.server_name.default = data.get("name", "")
+            self.rules.default = data.get("rules", "")
+            self.server_format.default = data.get("format", "")
+
+    async def on_submit(self, interaction: discord.Interaction):
+        await interaction.response.defer(ephemeral=True)
+        
+        # === PERBAIKAN PENTING ===
+        # Kita tidak perlu lagi .replace("\\n", "\n")
+        # Nilai dari modal paragraf sudah otomatis mengandung \n jika user menekan Enter.
+        
+        new_data = {
+            "name": self.server_name.value,
+            "rules": self.rules.value,       # Simpan langsung
+            "format": self.server_format.value  # Simpan langsung
+        }
+
+        configs = load_server_config()
+        action = "diperbarui" if self.server_key in configs else "ditambahkan"
+        configs[self.server_key] = new_data
+
+        if save_server_config(configs):
+            await interaction.followup.send(f"✅ Server `{self.server_key}` (Nama: {self.server_name.value}) berhasil {action}.", ephemeral=True)
+        else:
+            await interaction.followup.send(f"❌ Gagal menyimpan konfigurasi ke {SERVER_CONFIG_FILE}.", ephemeral=True)
+
+class AddServerHelperView(ui.View):
+    """View yang berisi tombol untuk memicu Modal Admin."""
+    def __init__(self, server_key: str, author: discord.User, timeout: int = 180):
+        super().__init__(timeout=timeout)
+        self.server_key = server_key
+        self.author = author
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        """Memastikan hanya pengguna yang mengetik perintah yang bisa menekan tombol."""
+        if interaction.user.id != self.author.id:
+            await interaction.response.send_message("❌ Anda tidak dapat menggunakan tombol ini.", ephemeral=True)
+            return False
+        return True
+    
+    async def on_timeout(self):
+        """Hapus tombol saat timeout."""
+        try:
+            if self.message:
+                await self.message.edit(content="Waktu habis untuk membuka form.", view=None)
+        except discord.NotFound:
+            pass # Pesan mungkin sudah dihapus
+
+    @ui.button(label="Buka Form Tambah/Edit Server", style=discord.ButtonStyle.primary, emoji="📝")
+    async def open_modal_button(self, interaction: discord.Interaction, button: ui.Button):
+        """Membuka modal saat tombol ditekan."""
+        await interaction.response.send_modal(AddServerModal(self.server_key))
+        
+        # Hapus tombol setelah diklik
+        await interaction.message.edit(view=None)
+        self.stop()
+
+
+# ============================
 # KELAS COG UTAMA
 # ============================
 class CharacterStoryCog(commands.Cog, name="CharacterStory"):
@@ -363,7 +454,7 @@ class CharacterStoryCog(commands.Cog, name="CharacterStory"):
         await ctx.send(embed=embed, view=CSPanelView(self.bot))
 
     # ============================
-    # PERINTAH ADMIN BARU
+    # PERINTAH ADMIN BARU (DENGAN MODAL)
     # ============================
     
     @commands.command(name="addserver")
@@ -374,47 +465,19 @@ class CharacterStoryCog(commands.Cog, name="CharacterStory"):
         if not server_key:
             await ctx.send("❌ Key tidak boleh kosong. Contoh: `!addserver ssrp`")
             return
+        
+        # Buat view dengan tombol
+        view = AddServerHelperView(server_key, ctx.author)
+        
+        # Kirim pesan dengan tombol
+        message = await ctx.send(
+            f"Klik tombol di bawah untuk membuka form input data server `{server_key}`.\n*(Hanya Anda yang bisa menekan tombol ini. Tombol akan hilang dalam 3 menit.)*",
+            view=view
+        )
+        
+        # Simpan referensi pesan di view agar bisa diedit saat timeout
+        view.message = message
 
-        # Fungsi check untuk memastikan pesan balasan berasal dari user yang sama di channel yang sama
-        def check(m: discord.Message):
-            return m.author == ctx.author and m.channel == ctx.channel
-
-        try:
-            # 1. Dapatkan Nama Tampilan
-            await ctx.send(f"➡️ **(1/3)** | Masukkan **Nama Tampilan** untuk server `{server_key}`:\n*(Contoh: SSRP, Virtual RP)*")
-            msg_name = await self.bot.wait_for('message', check=check, timeout=300.0)
-            server_name_val = msg_name.content
-
-            # 2. Dapatkan Rules
-            await ctx.send(f"➡️ **(2/3)** | Masukkan **Rules** untuk `{server_key}`:\n*(Gunakan `\\n` untuk baris baru. Contoh: `- Minimal 4 paragraf.\\n- Wajib baku.`)*")
-            msg_rules = await self.bot.wait_for('message', check=check, timeout=600.0) # Timeout lebih lama untuk input kompleks
-            cleaned_rules = msg_rules.content.replace("\\n", "\n")
-
-            # 3. Dapatkan Format
-            await ctx.send(f"➡️ **(3/3)** | Masukkan **Format** untuk `{server_key}`:\n*(Gunakan `{{nama_char}}`, `{{story}}`, dll. dan `\\n` untuk baris baru)*")
-            msg_format = await self.bot.wait_for('message', check=check, timeout=600.0) # Timeout lebih lama
-            cleaned_format = msg_format.content.replace("\\n", "\n")
-
-            # Semua data terkumpul, lanjutkan penyimpanan
-            new_data = {
-                "name": server_name_val,
-                "rules": cleaned_rules,
-                "format": cleaned_format
-            }
-
-            configs = load_server_config()
-            action = "diperbarui" if server_key in configs else "ditambahkan"
-            configs[server_key] = new_data
-
-            if save_server_config(configs):
-                await ctx.send(f"✅ Server `{server_key}` (Nama: {server_name_val}) berhasil {action}.")
-            else:
-                await ctx.send(f"❌ Gagal menyimpan konfigurasi ke {SERVER_CONFIG_FILE}.")
-
-        except asyncio.TimeoutError:
-            await ctx.send(f"❌ Waktu habis. Proses `!addserver` untuk `{server_key}` dibatalkan.")
-        except Exception as e:
-            await ctx.send(f"❌ Terjadi error tak terduga: {e}")
 
     @commands.command(name="delserver")
     @commands.has_permissions(administrator=True)
