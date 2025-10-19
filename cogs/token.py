@@ -227,49 +227,51 @@ class ClaimPanelView(ui.View):
         
         claims_content, _ = get_github_file(self.PRIMARY_REPO, self.CLAIMS_FILE_PATH, self.GITHUB_TOKEN)
         if claims_content is None:
-             await interaction.followup.send("❌ Error: Gagal membaca database klaim (claims.json). Pastikan `PRIMARY_REPO` di .env sudah benar.", ephemeral=True); return
+            await interaction.followup.send("❌ Error: Gagal membaca database klaim (claims.json).", ephemeral=True); return
         claims_data = json.loads(claims_content if claims_content else '{}')
 
-        if user_id not in claims_data or not claims_data[user_id]: # Juga cek jika data user kosong
+        if user_id not in claims_data or not claims_data[user_id]:
             await interaction.followup.send("Anda belum pernah melakukan klaim token atau data Anda kosong.", ephemeral=True); return
         
         user_data = claims_data[user_id]
         embed = discord.Embed(title="📄 Detail Token Anda", color=discord.Color.blue())
-        
-        # Menambahkan avatar pengguna
         embed.set_thumbnail(url=interaction.user.display_avatar.url) 
         
-        # Cek Token Aktif
-        token_aktif = False
-        if 'current_token' in user_data and 'token_expiry_timestamp' in user_data:
-            try:
-                expiry_time = datetime.fromisoformat(user_data["token_expiry_timestamp"])
-                if expiry_time > current_time:
-                    embed.add_field(name="Token Aktif", value=f"```{user_data['current_token']}```", inline=False)
-                    embed.add_field(name="Sumber", value=f"`{user_data.get('source_alias', 'N/A').title()}`", inline=True)
-                    embed.add_field(name="Kedaluwarsa Pada", value=f"<t:{int(expiry_time.timestamp())}:F> (<t:{int(expiry_time.timestamp())}:R>)", inline=True)
-                    token_aktif = True
-            except ValueError:
-                embed.add_field(name="Token Aktif", value="Error: Format data kedaluwarsa tidak valid.", inline=False)
+        # === UPDATE: Tampilkan semua token ===
+        active_tokens = []
+        if 'tokens' in user_data:
+            for idx, token_info in enumerate(user_data['tokens'], 1):
+                try:
+                    expiry_time = datetime.fromisoformat(token_info["expiry_timestamp"])
+                    if expiry_time > current_time:
+                        active_tokens.append(
+                            f"**Token {idx}:** ```{token_info['token']}```\n"
+                            f"Sumber: `{token_info.get('source_alias', 'N/A').title()}`\n"
+                            f"Kadaluarsa: <t:{int(expiry_time.timestamp())}:F> (<t:{int(expiry_time.timestamp())}:R>)"
+                        )
+                except (ValueError, KeyError):
+                    continue
 
-        if not token_aktif:
-             embed.description = "Anda tidak memiliki token yang aktif saat ini."
+        if active_tokens:
+            for token_text in active_tokens:
+                embed.add_field(name="\u200b", value=token_text, inline=False)
+        else:
+            embed.description = "Anda tidak memiliki token yang aktif saat ini."
 
-        # Cek Cooldown
+        # Cooldown
         if 'last_claim_timestamp' in user_data:
             try:
                 last_claim_time = datetime.fromisoformat(user_data["last_claim_timestamp"])
                 next_claim_time = last_claim_time + timedelta(days=7)
                 if current_time < next_claim_time:
-                     embed.add_field(name="Cooldown Klaim", value=f"Bisa klaim lagi <t:{int(next_claim_time.timestamp())}:R>", inline=False)
+                    embed.add_field(name="⏳ Cooldown Klaim", value=f"Bisa klaim lagi <t:{int(next_claim_time.timestamp())}:R>", inline=False)
                 else:
-                     embed.add_field(name="Cooldown Klaim", value="✅ Anda sudah bisa klaim token baru.", inline=False)
+                    embed.add_field(name="✅ Cooldown Klaim", value="Anda sudah bisa klaim token baru.", inline=False)
             except ValueError:
-                embed.add_field(name="Cooldown Klaim", value="Error: Format data klaim terakhir tidak valid.", inline=False)
+                embed.add_field(name="Cooldown Klaim", value="Error: Format data tidak valid.", inline=False)
         else:
-            embed.add_field(name="Cooldown Klaim", value="✅ Anda bisa klaim token sekarang.", inline=False)
+            embed.add_field(name="✅ Cooldown Klaim", value="Anda bisa klaim token sekarang.", inline=False)
 
-        # Menambahkan promosi VIP
         embed.add_field(
             name="✨ Mau Token VIP Permanen?",
             value="malas nunggu cooldown dan token vip gratis ga karuan?? langsung <#1413805462129741874> aja.",
@@ -393,7 +395,15 @@ class TokenCog(commands.Cog, name="Token"):
                                 data.pop("token_expiry_timestamp", None)
                                 data.pop("source_alias", None)
                                 data.pop("assigned_by_admin", None) # Hapus juga jika ada
-                                
+                            # Bersihkan token kedaluwarsa dari array tokens[]
+                            if 'tokens' in data:
+                                data['tokens'] = [
+                                    t for t in data['tokens'] 
+                                    if datetime.fromisoformat(t['expiry_timestamp']) > current_time
+                                ]
+                                # Jika array kosong, hapus key
+                                if not data['tokens']:
+                                    data.pop('tokens', None)
                         except ValueError:
                              logger.warning(f"Format expiry timestamp tidak valid untuk user {key}. Melewati cek expired.")
                 
@@ -445,6 +455,7 @@ class TokenCog(commands.Cog, name="Token"):
     async def before_cleanup(self):
         await self.bot.wait_until_ready()
         logger.info("Background task 'cleanup_expired_tokens' siap.")
+        
 
     # --- SLASH COMMANDS (ADMIN) ---
 
@@ -875,8 +886,8 @@ class TokenCog(commands.Cog, name="Token"):
         
         claims_content, _ = get_github_file(self.PRIMARY_REPO, self.CLAIMS_FILE_PATH, self.GITHUB_TOKEN)
         if claims_content is None:
-             await interaction.followup.send("❌ Gagal membaca database klaim (claims.json).", ephemeral=True)
-             return
+            await interaction.followup.send("❌ Gagal membaca database klaim (claims.json).", ephemeral=True)
+            return
         claims_data = json.loads(claims_content if claims_content else '{}')
         user_id_str = str(user.id)
         current_time = datetime.now(timezone.utc)
@@ -889,25 +900,28 @@ class TokenCog(commands.Cog, name="Token"):
         embed = discord.Embed(title=f"🔍 Status Token - {user.display_name}", color=discord.Color.orange())
         embed.set_thumbnail(url=user.display_avatar.url)
         
-        token_aktif = False
-        if 'current_token' in user_data and 'token_expiry_timestamp' in user_data:
-            try:
-                expiry_time = datetime.fromisoformat(user_data["token_expiry_timestamp"])
-                if expiry_time > current_time:
-                    embed.add_field(name="Token Aktif", value=f"`{user_data['current_token']}`", inline=False)
-                    embed.add_field(name="Sumber", value=f"`{user_data.get('source_alias', 'N/A').title()}`", inline=True)
-                    embed.add_field(name="Kedaluwarsa", value=f"<t:{int(expiry_time.timestamp())}:R>", inline=True)
-                    if user_data.get("assigned_by_admin"):
-                         admin_assign = self.bot.get_user(user_data["assigned_by_admin"])
-                         admin_name = str(admin_assign) if admin_assign else f"ID: {user_data['assigned_by_admin']}"
-                         embed.add_field(name="Diberikan Oleh", value=f"Admin ({admin_name})", inline=False)
-                    token_aktif = True
-            except ValueError:
-                 embed.add_field(name="Token Aktif", value="Error: Format data kedaluwarsa tidak valid.", inline=False)
-
-        if not token_aktif:
+        # === UPDATE: Tampilkan semua token aktif ===
+        active_tokens = []
+        if 'tokens' in user_data:
+            for idx, token_info in enumerate(user_data['tokens'], 1):
+                try:
+                    expiry_time = datetime.fromisoformat(token_info["expiry_timestamp"])
+                    if expiry_time > current_time:
+                        active_tokens.append(
+                            f"**{idx}.** `{token_info['token']}`\n"
+                            f"   └ Sumber: `{token_info.get('source_alias', 'N/A').title()}`\n"
+                            f"   └ Kadaluarsa: <t:{int(expiry_time.timestamp())}:R>"
+                        )
+                except (ValueError, KeyError):
+                    continue
+        
+        if active_tokens:
+            tokens_text = "\n\n".join(active_tokens)
+            embed.add_field(name=f"🔑 Token Aktif ({len(active_tokens)})", value=tokens_text, inline=False)
+        else:
             embed.description = "Pengguna tidak memiliki token aktif saat ini."
-
+        
+        # Cooldown info
         if 'last_claim_timestamp' in user_data:
             try:
                 last_claim_time = datetime.fromisoformat(user_data["last_claim_timestamp"])
@@ -918,11 +932,103 @@ class TokenCog(commands.Cog, name="Token"):
                 else:
                     embed.add_field(name="Cooldown Klaim", value="✅ Sudah bisa klaim lagi", inline=False)
             except ValueError:
-                 embed.add_field(name="Cooldown Klaim", value="Error: Format data klaim terakhir tidak valid.", inline=False)
+                embed.add_field(name="Cooldown Klaim", value="Error: Format data klaim terakhir tidak valid.", inline=False)
         else:
-             if not token_aktif:
-                 embed.add_field(name="Cooldown Klaim", value="✅ Bisa klaim (belum pernah klaim normal / sudah direset)", inline=False)
+            if not active_tokens:
+                embed.add_field(name="Cooldown Klaim", value="✅ Bisa klaim (belum pernah klaim normal / sudah direset)", inline=False)
 
+        await interaction.followup.send(embed=embed, ephemeral=True)
+
+    @app_commands.command(name="revoke_token", description="[ADMIN] Cabut token spesifik dari user")
+    @app_commands.describe(user="User target", token="Token yang akan dicabut")
+    @app_commands.check(is_admin_check_slash)
+    async def revoke_token_slash(self, interaction: discord.Interaction, user: discord.Member, token: str):
+        await interaction.response.defer(ephemeral=True, thinking=True)
+        admin = interaction.user
+        user_id_str = str(user.id)
+        
+        async with self.bot.github_lock:
+            claims_content, claims_sha = get_github_file(self.PRIMARY_REPO, self.CLAIMS_FILE_PATH, self.GITHUB_TOKEN)
+            if claims_content is None:
+                await interaction.followup.send("❌ Gagal membaca claims.json.", ephemeral=True); return
+            claims_data = json.loads(claims_content if claims_content else '{}')
+            
+            if user_id_str not in claims_data or 'tokens' not in claims_data[user_id_str]:
+                await interaction.followup.send(f"❌ {user.mention} tidak memiliki token.", ephemeral=True); return
+            
+            # Cari dan hapus token
+            original_count = len(claims_data[user_id_str]['tokens'])
+            claims_data[user_id_str]['tokens'] = [
+                t for t in claims_data[user_id_str]['tokens'] 
+                if t['token'] != token
+            ]
+            new_count = len(claims_data[user_id_str]['tokens'])
+            
+            if original_count == new_count:
+                await interaction.followup.send(f"❌ Token `{token}` tidak ditemukan pada {user.mention}.", ephemeral=True); return
+            
+            # Update current_token jika yang dicabut adalah current
+            if claims_data[user_id_str].get('current_token') == token:
+                if claims_data[user_id_str]['tokens']:
+                    latest = claims_data[user_id_str]['tokens'][-1]
+                    claims_data[user_id_str]['current_token'] = latest['token']
+                    claims_data[user_id_str]['token_expiry_timestamp'] = latest['expiry_timestamp']
+                    claims_data[user_id_str]['source_alias'] = latest['source_alias']
+                else:
+                    claims_data[user_id_str].pop('current_token', None)
+                    claims_data[user_id_str].pop('token_expiry_timestamp', None)
+            
+            if not claims_data[user_id_str]['tokens']:
+                claims_data[user_id_str].pop('tokens', None)
+            
+            if update_github_file(self.PRIMARY_REPO, self.CLAIMS_FILE_PATH, json.dumps(claims_data, indent=4), claims_sha, f"Admin {admin.name}: Revoke token {token} from {user.name}", self.GITHUB_TOKEN):
+                await interaction.followup.send(f"✅ Token `{token}` berhasil dicabut dari {user.mention}. Sisa: {new_count} token.", ephemeral=True)
+                try:
+                    await user.send(f"⚠️ Token `{token}` Anda telah dicabut oleh admin {admin.mention}.")
+                except: pass
+            else:
+                await interaction.followup.send("❌ Gagal update claims.json.", ephemeral=True)
+
+    @app_commands.command(name="token_stats", description="[ADMIN] Statistik token sistem")
+    @app_commands.check(is_admin_check_slash)
+    async def token_stats_slash(self, interaction: discord.Interaction):
+        await interaction.response.defer(ephemeral=True, thinking=True)
+        
+        claims_content, _ = get_github_file(self.PRIMARY_REPO, self.CLAIMS_FILE_PATH, self.GITHUB_TOKEN)
+        if not claims_content:
+            await interaction.followup.send("❌ Gagal membaca claims.json.", ephemeral=True); return
+        claims_data = json.loads(claims_content)
+        current_time = datetime.now(timezone.utc)
+        
+        total_users = len([k for k in claims_data.keys() if k.isdigit()])
+        total_active_tokens = 0
+        total_expired_tokens = 0
+        tokens_by_source = {}
+        
+        for key, data in claims_data.items():
+            if key.isdigit() and 'tokens' in data:
+                for token_info in data['tokens']:
+                    try:
+                        expiry = datetime.fromisoformat(token_info['expiry_timestamp'])
+                        source = token_info.get('source_alias', 'unknown')
+                        
+                        if expiry > current_time:
+                            total_active_tokens += 1
+                            tokens_by_source[source] = tokens_by_source.get(source, 0) + 1
+                        else:
+                            total_expired_tokens += 1
+                    except: pass
+        
+        embed = discord.Embed(title="📊 Statistik Token Sistem", color=discord.Color.gold())
+        embed.add_field(name="👥 Total User Terdaftar", value=f"`{total_users}` user", inline=True)
+        embed.add_field(name="🔑 Token Aktif", value=f"`{total_active_tokens}` token", inline=True)
+        embed.add_field(name="⏳ Token Kedaluwarsa", value=f"`{total_expired_tokens}` token", inline=True)
+        
+        if tokens_by_source:
+            source_text = "\n".join([f"• **{src.title()}**: {count} token" for src, count in tokens_by_source.items()])
+            embed.add_field(name="📂 Token per Sumber", value=source_text, inline=False)
+        
+        embed.timestamp = datetime.now(timezone.utc)
         await interaction.followup.send(embed=embed, ephemeral=True)
 
     @app_commands.command(name="list_tokens", description="[ADMIN] Menampilkan semua token aktif")
