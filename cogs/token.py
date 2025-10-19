@@ -182,14 +182,35 @@ class ClaimPanelView(ui.View):
                     logger.info(f"Status Rollback: {'Berhasil' if rollback_success else 'Gagal'}")
                 await interaction.followup.send("❌ **Klaim Gagal!** Terjadi kesalahan saat menyimpan data klaim Anda. Token tidak dapat diberikan. Silakan hubungi admin.", ephemeral=True); return
 
+        # Kirim DM ke pengguna
         try:
-            await user.send(
-                f"🎉 **Token Anda Berhasil Diklaim!**\n\n"
-                f"**Sumber:** `{source_alias.title()}`\n"
-                f"**Token Anda:** ```{new_token}```\n"
-                f"**Role:** `{claim_role.title()}`\n"
-                f"Aktif hingga: <t:{int(expiry_timestamp.timestamp())}:F> (<t:{int(expiry_timestamp.timestamp())}:R>)"
+            # =================================================================
+            # PERUBAHAN DI SINI: Mengganti teks biasa dengan Embed
+            # =================================================================
+            embed = discord.Embed(
+                title="🎉 Token Anda Berhasil Diklaim!",
+                description=f"Token Anda untuk role **{claim_role.title()}** telah berhasil dibuat.",
+                color=discord.Color.brand_green() # Warna hijau
             )
+            embed.add_field(name="Token Anda", value=f"```{new_token}```", inline=False)
+            embed.add_field(name="Sumber", value=f"`{source_alias.title()}`", inline=True)
+            embed.add_field(name="Aktif Hingga", value=f"<t:{int(expiry_timestamp.timestamp())}:F> (<t:{int(expiry_timestamp.timestamp())}:R>)", inline=True)
+            
+            # Menambahkan promosi VIP
+            embed.add_field(
+                name="✨ Mau Token VIP Permanen?",
+                value="malas nunggu cooldown dan token vip gratis ga karuan?? langsung <#1413805462129741874> aja.",
+                inline=False
+            )
+            
+            embed.set_footer(text="Gunakan token ini untuk mengakses file.")
+            embed.timestamp = datetime.now(timezone.utc)
+            
+            await user.send(embed=embed)
+            # =================================================================
+            # AKHIR PERUBAHAN
+            # =================================================================
+            
             await interaction.followup.send("✅ **Berhasil!** Token Anda telah dikirim melalui DM.", ephemeral=True)
         except discord.Forbidden:
             logger.warning(f"Gagal mengirim DM ke {user.name} ({user_id}).")
@@ -209,12 +230,16 @@ class ClaimPanelView(ui.View):
              await interaction.followup.send("❌ Error: Gagal membaca database klaim (claims.json). Pastikan `PRIMARY_REPO` di .env sudah benar.", ephemeral=True); return
         claims_data = json.loads(claims_content if claims_content else '{}')
 
-        if user_id not in claims_data or not claims_data[user_id]:
+        if user_id not in claims_data or not claims_data[user_id]: # Juga cek jika data user kosong
             await interaction.followup.send("Anda belum pernah melakukan klaim token atau data Anda kosong.", ephemeral=True); return
         
         user_data = claims_data[user_id]
         embed = discord.Embed(title="📄 Detail Token Anda", color=discord.Color.blue())
         
+        # Menambahkan avatar pengguna
+        embed.set_thumbnail(url=interaction.user.display_avatar.url) 
+        
+        # Cek Token Aktif
         token_aktif = False
         if 'current_token' in user_data and 'token_expiry_timestamp' in user_data:
             try:
@@ -230,6 +255,7 @@ class ClaimPanelView(ui.View):
         if not token_aktif:
              embed.description = "Anda tidak memiliki token yang aktif saat ini."
 
+        # Cek Cooldown
         if 'last_claim_timestamp' in user_data:
             try:
                 last_claim_time = datetime.fromisoformat(user_data["last_claim_timestamp"])
@@ -242,6 +268,13 @@ class ClaimPanelView(ui.View):
                 embed.add_field(name="Cooldown Klaim", value="Error: Format data klaim terakhir tidak valid.", inline=False)
         else:
             embed.add_field(name="Cooldown Klaim", value="✅ Anda bisa klaim token sekarang.", inline=False)
+
+        # Menambahkan promosi VIP
+        embed.add_field(
+            name="✨ Mau Token VIP Permanen?",
+            value="malas nunggu cooldown dan token vip gratis ga karuan?? langsung <#1413805462129741874> aja.",
+            inline=False
+        )
 
         await interaction.followup.send(embed=embed, ephemeral=True)
 
@@ -330,7 +363,8 @@ class TokenCog(commands.Cog, name="Token"):
                                     try:
                                         await member.send(
                                             f"⏳ Token Anda (`{token}`) telah kedaluwarsa.\n"
-                                            f"Status cooldown: {next_claim_time_str}"
+                                            f"Status cooldown: {next_claim_time_str}.\n"
+                                            f"malas nunggu cooldown dan token vip gratis ga karuan?? langsung <#1413805462129741874> aja."
                                         )
                                         logger.info(f"Mengirim notifikasi token expired ke user {key}.")
                                     except discord.Forbidden:
@@ -685,23 +719,36 @@ class TokenCog(commands.Cog, name="Token"):
                     await interaction.followup.send(f"ℹ️ Token sudah ada di file sumber sebelumnya (tidak ada rollback).", ephemeral=True)
                 return
 
+        # 3. Kirim DM ke User (di luar lock)
         try:
-            await user.send(
-                f"🎁 Anda telah diberikan token oleh admin!\n\n"
-                f"**Token:** ```{token}```\n"
-                f"**Sumber:** `{alias.title()}`\n"
-                f"**Diberikan oleh:** {admin.mention}\n"
-                f"**Aktif hingga:** <t:{int(expiry_time.timestamp())}:F> (<t:{int(expiry_time.timestamp())}:R>)\n\n"
-                f"*Catatan: Pemberian token ini tidak memengaruhi cooldown klaim normal Anda.*"
+            embed = discord.Embed(
+                title="🎁 Token Diberikan oleh Admin!",
+                description=f"Anda telah diberikan token oleh {admin.mention}.",
+                color=discord.Color.brand_green() # Warna hijau
             )
+            embed.add_field(name="Token Anda", value=f"```{token}```", inline=False)
+            embed.add_field(name="Sumber", value=f"`{alias.title()}`", inline=True)
+            embed.add_field(name="Aktif Hingga", value=f"<t:{int(expiry_time.timestamp())}:F> (<t:{int(expiry_time.timestamp())}:R>)", inline=True)
+            
+            # Menambahkan promosi VIP
+            embed.add_field(
+                name="✨ Mau Token VIP Permanen?",
+                value="malas nunggu cooldown dan token vip gratis ga karuan?? langsung <#1413805462129741874> aja.",
+                inline=False
+            )
+            
+            embed.set_footer(text=f"Catatan: Pemberian token ini tidak memengaruhi cooldown klaim normal Anda.")
+            embed.timestamp = datetime.now(timezone.utc)
+
+            await user.send(embed=embed)
             logger.info(f"Admin {admin.name} berhasil memberikan token {token} ke {user.name}. DM terkirim.")
-            await interaction.followup.send(f"✅ Token `{token}` berhasil diberikan kepada {user.mention} selama `{durasi}`. Notifikasi DM telah dikirim.", ephemeral=True)
+            await ctx.send(f"✅ Token `{token}` berhasil diberikan kepada {user.mention} selama `{durasi}`. Notifikasi DM telah dikirim.", delete_after=15)
         except discord.Forbidden:
             logger.warning(f"Gagal mengirim DM pemberian token ke {user.name} ({user.id}). Token tetap diberikan.")
-            await interaction.followup.send(f"✅ Token `{token}` berhasil diberikan kepada {user.mention}, namun gagal mengirim notifikasi DM.", ephemeral=True)
+            await ctx.send(f"✅ Token `{token}` berhasil diberikan kepada {user.mention}, namun gagal mengirim notifikasi DM.", delete_after=15)
         except Exception as e:
             logger.error(f"Error tidak dikenal saat kirim DM pemberian token: {e}")
-            await interaction.followup.send(f"✅ Token `{token}` berhasil diberikan kepada {user.mention}, namun gagal mengirim notifikasi DM karena error.", ephemeral=True)
+            await ctx.send(f"✅ Token `{token}` berhasil diberikan kepada {user.mention}, namun gagal mengirim notifikasi DM karena error.", delete_after=15)
 
     @app_commands.command(name="read_file", description="[ADMIN] Membaca konten file dari sumber token (kirim via DM)")
     @app_commands.describe(alias="Alias sumber token")
@@ -955,16 +1002,28 @@ class TokenCog(commands.Cog, name="Token"):
 
         sent_count = 0
         failed_count = 0
-        msg = await interaction.followup.send(f"Mengirim notifikasi ke {len(users_to_notify)} pengguna...", ephemeral=True)
+        # Menggunakan interaction.edit_original_response nanti, jadi followup.send tidak perlu disimpan
+        await interaction.followup.send(f"Mengirim notifikasi ke {len(users_to_notify)} pengguna...", ephemeral=True)
         
         for user_id in users_to_notify:
              member = self.bot.get_user(user_id)
              if member:
                  try:
-                     await member.send("🎉 Cooldown klaim token Anda telah berakhir! Anda sudah bisa melakukan klaim lagi.")
-                     self.cooldown_notified_users.add(user_id)
-                     sent_count += 1
-                     await asyncio.sleep(0.5)
+                    embed = discord.Embed(
+                        title="🎉 Cooldown Klaim Selesai",
+                        description="Cooldown klaim token Anda telah berakhir! Anda sudah bisa melakukan klaim lagi.",
+                        color=discord.Color.green()
+                    )
+                    embed.add_field(
+                        name="Mau Lewati Cooldown?",
+                        value="malas nunggu cooldown dan token vip gratis ga karuan?? langsung <#1413805462129741874> aja."
+                    )
+                    embed.set_footer(text="Notifikasi ini dikirim otomatis.")
+                    
+                    await member.send(embed=embed)
+                    self.cooldown_notified_users.add(user_id)
+                    sent_count += 1
+                    await asyncio.sleep(0.5)
                  except discord.Forbidden:
                      logger.warning(f"Gagal kirim DM cooldown berakhir ke user {user_id} (DM ditutup).")
                      failed_count += 1
@@ -973,7 +1032,6 @@ class TokenCog(commands.Cog, name="Token"):
                      failed_count += 1
              else:
                  logger.warning(f"User {user_id} tidak ditemukan untuk notifikasi cooldown.")
-        
         await interaction.edit_original_response(content=f"✅ Selesai. Notifikasi cooldown terkirim ke **{sent_count} pengguna**. Gagal mengirim ke **{failed_count} pengguna**.")
 
     @app_commands.command(name="list_sources", description="[ADMIN] Lihat semua sumber token terkonfigurasi")
