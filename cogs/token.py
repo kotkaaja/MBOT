@@ -1221,6 +1221,41 @@ class TokenCog(commands.Cog, name="Token"):
         
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
+    @app_commands.command(name="migrate_old_data", description="[ADMIN] Migrasi data lama ke format multi-token (jalankan sekali saja)")
+    @app_commands.check(is_admin_check_slash)
+    async def migrate_old_data(self, interaction: discord.Interaction):
+        await interaction.response.defer(ephemeral=True, thinking=True)
+        
+        async with self.bot.github_lock:
+            claims_content, claims_sha = get_github_file(self.PRIMARY_REPO, self.CLAIMS_FILE_PATH, self.GITHUB_TOKEN)
+            if not claims_content:
+                await interaction.followup.send("❌ Gagal membaca claims.json.", ephemeral=True)
+                return
+            
+            claims_data = json.loads(claims_content)
+            migrated_count = 0
+            
+            for user_id, data in claims_data.items():
+                # Skip shared tokens dan user yang sudah punya tokens[]
+                if not user_id.isdigit() or 'tokens' in data:
+                    continue
+                
+                # Jika ada current_token tapi belum ada tokens[]
+                if 'current_token' in data and 'token_expiry_timestamp' in data:
+                    data['tokens'] = [{
+                        "token": data['current_token'],
+                        "expiry_timestamp": data['token_expiry_timestamp'],
+                        "source_alias": data.get('source_alias', 'bassic')
+                    }]
+                    migrated_count += 1
+            
+            if migrated_count > 0:
+                if update_github_file(self.PRIMARY_REPO, self.CLAIMS_FILE_PATH, json.dumps(claims_data, indent=4), claims_sha, f"Admin {interaction.user.name}: Migrate {migrated_count} users to multi-token format", self.GITHUB_TOKEN):
+                    await interaction.followup.send(f"✅ Berhasil migrasi **{migrated_count} user** ke format multi-token.", ephemeral=True)
+                else:
+                    await interaction.followup.send("❌ Gagal menyimpan hasil migrasi.", ephemeral=True)
+            else:
+                await interaction.followup.send("ℹ️ Tidak ada data yang perlu dimigrasi.", ephemeral=True)
 
 async def setup(bot):
     if not hasattr(bot, 'claim_view_added') or not bot.claim_view_added:
