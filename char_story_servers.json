@@ -1,0 +1,22 @@
+{
+    "ssrp": {
+        "name": "SSRP",
+        "rules": "- Cerita harus memiliki minimal 4 paragraf dan 3 kalimat di setiap paragraf.\n- Gunakan 5 spasi di awal setiap paragraf.\n- Tulis tanggal lahir dalam format 'DD Bulan YYYY'.\n- Gunakan huruf kapital hanya pada nama orang, nama tempat, dan awal kalimat.\n- Gunakan Bahasa Indonesia yang baku dan sesuai KBBI.\n- Jangan gunakan garis bawah (_) pada nama karakter dalam cerita. Contoh salah: Muriel_Bagge, contoh benar: Muriel Bagge.\n- Pastikan penggunaan tanda baca (titik dan koma) tepat.",
+        "format": "**__FORMAT REQUEST CS | SSRP__**\n- Nama karakter : {nama_char}\n- Level karakter : {level}\n- Jenis kelamin karakter : {jenis_kelamin}\n- Tempat, tanggal lahir karakter : {kota_asal}, {tanggal_lahir}\n- Screenshot /stats : (Lampirkan manual)\nSTORY :\n\n{story}"
+    },
+    "virtual_rp": {
+        "name": "Virtual RP",
+        "rules": "- Cerita harus memiliki minimal 250 suku kata.\n- Umur karakter minimal 17 tahun.\n- Beri jarak antar paragraf.\n- Cerita minimal 4 paragraf, dan 1 paragraf minimal 4 baris.\n- Gunakan Bahasa Indonesia yang baku dan sesuai KBBI.\n- Perhatikan penggunaan huruf kapital dan tanda baca (beri spasi setelah titik/koma).\n- Jangan menyalin story orang lain.\n- Jangan gunakan garis bawah (_) pada nama karakter dalam cerita. Contoh salah: Muriel_Bagge, contoh benar: Muriel Bagge.\n- Tulis tanggal lahir dalam format 'DD Bulan YYYY'.",
+        "format": "**__FORMAT CHARACTER STORY__**\n> NAMA UCP : (Isi manual)\n> NAMA IC : {nama_char}\n> UMUR SESUAI KTP IC : (Isi manual)\n> TEMPAT & TANGGAL LAHIR IC : {kota_asal}, {tanggal_lahir}\n> CHARACTER SLOT : (Isi manual)\n> SS KTP IC : (Lampirkan manual)\n\nSTORY :\n\n{story}"
+    },
+    "aarp": {
+        "name": "AARP",
+        "rules": "- Gunakan Bahasa Indonesia yang baku.\n- Jangan gunakan garis bawah (_) pada nama karakter dalam cerita. Contoh salah: Muriel_Bagge, contoh benar: Muriel Bagge.\n- Cerita minimal 1 paragraf atau lebih, singkat dan jelas.",
+        "format": "**__[Format Character Story]__**\n- Nama [ IC ] : {nama_char}\n- JENIS KELAMIN : {jenis_kelamin}\n- KOTA KELAHIRAN : {kota_asal}\n- TANGGAL LAHIR : {tanggal_lahir}\n- SS STATS PLAYER : (Lampirkan manual)\n\nStory :\n\n{story}"
+    },
+    "gcrp": {
+        "name": "GCRP",
+        "rules": "- Minimal 4 paragraf dan setiap paragraf minimal memiliki 4 baris.\n- Menggunakan bahasa Indonesia yang baku.\n- Alur cerita yang jelas dan tidak berbelit-belit.\n- Dilarang keras menjiplak/copy paste cerita orang lain.\n- Penulisan nama karakter tidak menggunakan garis bawah (_). Contoh salah: Muriel_Bagge, contoh benar: Muriel Bagge.",
+        "format": "**[GCRP] FORMAT CHARACTER STORY**\n* Nama UCP: (Isi Manual)\n* Nama Character: {nama_char}\n* Umur: (Isi Manual)\n* Latar Belakang Cerita:\n\n{story}"
+    }
+}
