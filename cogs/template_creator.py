@@ -14,33 +14,37 @@ import google.generativeai as genai
 logger = logging.getLogger(__name__)
 
 # ============================
-# KONSTANTA & PROMPT AI
+# KONSTANTA & PROMPT AI (REVISED)
 # ============================
 AI_TEMPLATE_PROMPT = """
 Expert SAMP RP script writer. Tema: "{theme}". Detail: {details}
 
 ATURAN WAJIB:
-1. /me = tindakan karakter (present tense), detail tapi singkat
-2. /do = hasil/situasi, bisa tanya "bisa?" untuk persetujuan
-3. 3-7 langkah logis, delay 2-4s seusikan dengan rpnya ( bisa lebih sesuai rp ) per aksi
-4. Jangan: emoji, force RP, undetailed RP
-5. Max 100 char/langkah, bahasa natural Indonesia
+1. /me = mendeskripsikan TINDAKAN karakter (present tense), detail tapi singkat. Contoh: /me mengambil pulpen dari meja dengan tangan kanan.
+2. /do = mendeskripsikan KEADAAN/HASIL/SITUASI di sekitar karakter atau kondisi karakter itu sendiri. TIDAK untuk bertanya 'bisa?'. Contoh: /do Terlihat pulpen di atas meja., /do Cuaca terlihat cerah.
+3. Buat 3-7 langkah RP yang logis dan berurutan.
+4. Sertakan delay antara 2-4 detik per langkah (bisa lebih jika aksi memang butuh waktu lama). Sesuaikan delay dengan logisnya aksi.
+5. Jangan gunakan: emoji, force RP (memaksa hasil pada pemain lain), undetailed RP (RP terlalu singkat/kurang jelas).
+6. Maksimal 100 karakter per langkah/command.
+7. Gunakan Bahasa Indonesia yang natural dan baku.
 
 LARANGAN:
-- Force: "/me memukuli sampai mati" ❌
-- Undetailed: "/me kaget" ❌ (harus "/me kaget melihat X")
-- Bohong di /do (OOC lie)
+- Force RP: "/me memukuli John Doe sampai mati" ❌ (Tidak boleh menentukan hasil akhir pada orang lain)
+- Undetailed RP: "/me kaget" ❌ (Harus lebih detail: "/me kaget melihat mobil melaju kencang")
+- Bohong di /do (OOC lie): "/do dompetnya kosong padahal ada uang" ❌
+- Menggunakan /do untuk bertanya izin seperti "bisa?" ❌
 
 Contoh BENAR:
-/me mengulurkan tangan kanan mencoba membantu dia bangun
-/do Bisa?
-/me menarik dengan hati-hati setelah mendapat persetujuan
+/me mengulurkan tangan kanan mencoba meraih gagang pintu
+/do Tangan kanan berhasil menggenggam gagang pintu.
+/me memutar gagang pintu dan mendorongnya perlahan
 
-JSON only:
+JSON only (WAJIB format ini, tanpa teks lain di luar JSON):
 {{
   "steps": [
     {{"command": "/me ...", "delay": 2}},
     {{"command": "/do ...", "delay": 3}}
+    // ... langkah selanjutnya
   ]
 }}
 """
@@ -843,15 +847,6 @@ class TemplateCreatorCog(commands.Cog, name="TemplateCreator"):
             if len(output) > 1900:
                 await ctx.send(f"```\n{output[1900:][:1900]}\n```")
         
-        # Preview steps
-        preview = "**Preview Langkah-langkah:**\n"
-        for i, step in enumerate(steps[:5], 1):
-            preview += f"{i}. `{step['command']}` (delay: {step.get('delay', 2)}s)\n"
-        if len(steps) > 5:
-            preview += f"... dan {len(steps) - 5} langkah lainnya"
-        
-        await ctx.send(preview)
-        
         # Cleanup session
         del self.active_sessions[ctx.author.id]
         
@@ -882,8 +877,8 @@ class TemplateCreatorCog(commands.Cog, name="TemplateCreator"):
             name="📝 Aturan RP yang Diterapkan AI",
             value=(
                 "✅ **/me** = Tindakan detail (present tense)\n"
-                "✅ **/do** = Hasil/situasi, tanya 'bisa?' jika perlu\n"
-                "✅ 3-7 langkah logis, delay 2-4s(bisa lebih sesuai kondisi rpnya)\n\n"
+                "✅ **/do** = Hasil/situasi (Bukan untuk tanya 'bisa?')\n" 
+                "✅ 3-7 langkah logis, delay 2-4s (disesuaikan AI)\n\n"
                 "❌ **Larangan:** Force RP, Undetailed RP, bohong di /do\n"
                 "❌ **Contoh salah:** '/me memukuli sampai mati' (force)\n"
                 "❌ **Contoh salah:** '/me kaget' (undetailed)"
