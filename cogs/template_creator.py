@@ -6,14 +6,14 @@ import logging
 import io
 import time
 import json
-import asyncio # <-- Pastikan asyncio diimpor
+import asyncio
 from typing import Dict, List, Optional, Tuple
 from openai import AsyncOpenAI
 
 logger = logging.getLogger(__name__)
 
 # ============================================
-# DATA KONSTANTA (Sama seperti sebelumnya)
+# DATA KONSTANTA (Sama)
 # ============================================
 KHP_MODIFIERS = ["Tidak Ada", "ALT", "SHIFT", "CTRL"]
 KHP_KEYS = (
@@ -31,7 +31,7 @@ WEAPON_NAMES = {
 WEAPON_NAME_TO_ID = {v: k for k, v in WEAPON_NAMES.items()}
 
 # ============================================
-# PROMPT AI (Sama seperti sebelumnya)
+# PROMPT AI (Sama)
 # ============================================
 AI_RP_GENERATION_PROMPT = """
 Peran: Anda adalah penulis RP (Roleplay) SAMP (San Andreas Multiplayer) yang kreatif dan berpengalaman.
@@ -69,35 +69,36 @@ Sekarang, buat langkah-langkah RP berdasarkan detail masukan di atas.
 """
 
 # ============================================
-# UI COMPONENTS (Sama seperti sebelumnya)
+# UI COMPONENTS (Sama, on_submit modal tidak perlu simpan interaction lagi)
 # ============================================
 class AIContextModal(ui.Modal, title="Deskripsi RP untuk AI"):
     rp_context = ui.TextInput(label="Jelaskan Aksi RP yang Diinginkan", placeholder="Contoh: Mekanik mengganti oli...", style=discord.TextStyle.paragraph, required=True, max_length=300)
     async def on_submit(self, interaction: discord.Interaction):
-        # Simpan data dan interaction object
-        self.interaction = interaction # Simpan interaction object
+        # Hanya simpan data, defer dilakukan di workflow
         interaction.data['rp_context'] = self.rp_context.value
-        await interaction.response.defer()
+        # Jangan defer di sini agar interaction bisa dipakai kirim modal berikutnya
     async def on_error(self, interaction: discord.Interaction, error: Exception):
         logger.error(f"Error di AIContextModal: {error}", exc_info=True)
-        # Cek jika sudah direspons
-        if not interaction.response.is_done():
-            await interaction.response.send_message("Terjadi error pada modal.", ephemeral=True)
-        else:
-             await interaction.followup.send("Terjadi error pada modal.", ephemeral=True)
+        # Coba kirim pesan error ephemeral
+        try:
+            if not interaction.response.is_done():
+                await interaction.response.send_message("Terjadi error pada modal.", ephemeral=True)
+            else:
+                 await interaction.followup.send("Terjadi error pada modal.", ephemeral=True)
+        except Exception: pass # Supaya tidak crash
 
 
 class BaseDetailsModal(ui.Modal):
     title_input = ui.TextInput(label="Judul/Nama Macro", placeholder="Contoh: RP Mancing Ikan", style=discord.TextStyle.short, required=True, max_length=128)
     def __init__(self, title: str): super().__init__(title=title)
-    # [PERBAIKAN] Tambahkan on_error
     async def on_error(self, interaction: discord.Interaction, error: Exception):
         logger.error(f"Error di BaseDetailsModal ({self.title}): {error}", exc_info=True)
-        if not interaction.response.is_done():
-            await interaction.response.send_message("Terjadi error pada modal detail.", ephemeral=True)
-        else:
-            await interaction.followup.send("Terjadi error pada modal detail.", ephemeral=True)
-
+        try:
+            if not interaction.response.is_done():
+                await interaction.response.send_message("Terjadi error pada modal detail.", ephemeral=True)
+            else:
+                await interaction.followup.send("Terjadi error pada modal detail.", ephemeral=True)
+        except Exception: pass
 
 class AutoRP_KHP_Modal(BaseDetailsModal):
     modifier = ui.Select(placeholder="Pilih Tombol Modifier...", options=[discord.SelectOption(label=m) for m in KHP_MODIFIERS])
@@ -107,24 +108,22 @@ class AutoRP_KHP_Modal(BaseDetailsModal):
         self.add_item(ui.Select(placeholder="Pilih Tombol Utama (Lanjutan)...", options=[discord.SelectOption(label=k) for k in KHP_KEYS[25:50]]))
         self.add_item(ui.Select(placeholder="Pilih Tombol Utama (Lanjutan 2)...", options=[discord.SelectOption(label=k) for k in KHP_KEYS[50:]]))
     async def on_submit(self, interaction: discord.Interaction):
-        self.interaction = interaction # Simpan interaction
         selected_key = None
         for item in self.children:
             if isinstance(item, ui.Select) and item.placeholder.startswith("Pilih Tombol Utama"):
                 if item.values: selected_key = item.values[0]; break
         if not selected_key: await interaction.response.send_message("Anda harus memilih Tombol Utama.", ephemeral=True); return
         interaction.data['details'] = {"title": self.title_input.value, "modifier": self.modifier.values[0], "primary_key": selected_key}
-        await interaction.response.defer()
+        # Jangan defer
 
 class CMD_Modal(BaseDetailsModal):
     command_trigger = ui.TextInput(label="Command Pemicu", placeholder="Contoh: /perbaiki", style=discord.TextStyle.short, required=True, max_length=128)
     def __init__(self, platform: str): super().__init__(title=f"Detail CMD Macro ({platform})")
     async def on_submit(self, interaction: discord.Interaction):
-        self.interaction = interaction # Simpan interaction
         trigger = self.command_trigger.value
         if not trigger.startswith('/'): await interaction.response.send_message("Command Pemicu harus diawali dengan '/'.", ephemeral=True); return
         interaction.data['details'] = {"title": self.title_input.value, "command": trigger}
-        await interaction.response.defer()
+        # Jangan defer
 
 class GunRP_Modal(BaseDetailsModal):
     weapon = ui.Select(placeholder="Pilih Senjata...", options=[discord.SelectOption(label=name) for name in list(WEAPON_NAMES.values())[:25]])
@@ -133,7 +132,6 @@ class GunRP_Modal(BaseDetailsModal):
         super().__init__(title=f"Detail Gun RP Macro ({platform})")
         if len(WEAPON_NAMES) > 25: self.add_item(ui.Select(placeholder="Pilih Senjata (Lanjutan)...", options=[discord.SelectOption(label=name) for name in list(WEAPON_NAMES.values())[25:]]))
     async def on_submit(self, interaction: discord.Interaction):
-        self.interaction = interaction # Simpan interaction
         selected_weapon_name = None
         for item in self.children:
              if isinstance(item, ui.Select) and item.placeholder.startswith("Pilih Senjata"):
@@ -142,17 +140,18 @@ class GunRP_Modal(BaseDetailsModal):
         weapon_id = WEAPON_NAME_TO_ID.get(selected_weapon_name)
         if not weapon_id: await interaction.response.send_message("Senjata tidak valid.", ephemeral=True); return
         interaction.data['details'] = {"title": self.title_input.value, "weapon_id": weapon_id, "weapon_name": selected_weapon_name, "action": self.action.values[0]}
-        await interaction.response.defer()
+        # Jangan defer
 
 # --- Views (Sama) ---
 class MacroTypeSelectView(ui.View):
-    def __init__(self, author_id: int, platform: str): super().__init__(timeout=180); self.author_id = author_id; self.platform = platform; self.macro_type: Optional[str] = None; self.interaction: Optional[discord.Interaction] = None # Simpan interaksi
+    # ... (kode view sama, _handle_selection JANGAN defer) ...
+    def __init__(self, author_id: int, platform: str): super().__init__(timeout=180); self.author_id = author_id; self.platform = platform; self.macro_type: Optional[str] = None
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
         if interaction.user.id != self.author_id: await interaction.response.send_message("Hanya peminta...", ephemeral=True); return False
         return True
     async def _handle_selection(self, interaction: discord.Interaction, macro_type: str):
-        self.interaction = interaction # Simpan interaksi
-        self.macro_type = macro_type; self.stop(); await interaction.response.defer()
+        self.macro_type = macro_type; self.stop()
+        # Jangan defer di sini agar interaction bisa dipakai kirim modal
     @ui.button(label="Auto RP Macro", style=discord.ButtonStyle.primary, emoji="🔥")
     async def auto_rp(self, interaction: discord.Interaction, button: ui.Button): await self._handle_selection(interaction, "auto_rp")
     @ui.button(label="CMD Macro", style=discord.ButtonStyle.primary, emoji="⌨️")
@@ -161,13 +160,14 @@ class MacroTypeSelectView(ui.View):
     async def gun_rp(self, interaction: discord.Interaction, button: ui.Button): await self._handle_selection(interaction, "gun")
 
 class PlatformSelectView(ui.View):
-    def __init__(self, author_id: int): super().__init__(timeout=180); self.author_id = author_id; self.platform: Optional[str] = None; self.interaction: Optional[discord.Interaction] = None # Simpan interaksi
+    # ... (kode view sama, _handle_selection JANGAN defer) ...
+    def __init__(self, author_id: int): super().__init__(timeout=180); self.author_id = author_id; self.platform: Optional[str] = None
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
         if interaction.user.id != self.author_id: await interaction.response.send_message("Hanya peminta...", ephemeral=True); return False
         return True
     async def _handle_selection(self, interaction: discord.Interaction, platform: str):
-        self.interaction = interaction # Simpan interaksi
-        self.platform = platform; self.stop(); await interaction.response.defer()
+        self.platform = platform; self.stop()
+        # Jangan defer di sini agar interaction bisa dipakai edit message
     @ui.button(label="PC (KHP)", style=discord.ButtonStyle.blurple, emoji="💻")
     async def pc(self, interaction: discord.Interaction, button: ui.Button): await self._handle_selection(interaction, "KHP")
     @ui.button(label="Mobile (KHMobile)", style=discord.ButtonStyle.green, emoji="📱")
@@ -240,13 +240,15 @@ def format_template(platform: str, macro_type: str, details: Dict, steps: List[D
 
     return content, filename
 
+
 # ============================================
-# KELAS COG UTAMA (Dimodifikasi lagi)
+# KELAS COG UTAMA (Direvisi Final)
 # ============================================
 class TemplateCreatorCog(commands.Cog, name="TemplateCreator"):
     def __init__(self, bot):
         self.bot = bot
         self.openai_client = None
+        # ... (inisialisasi OpenAI client sama) ...
         if bot.config.OPENAI_API_KEYS:
             try:
                 self.openai_client = AsyncOpenAI(api_key=bot.config.OPENAI_API_KEYS[0])
@@ -258,6 +260,7 @@ class TemplateCreatorCog(commands.Cog, name="TemplateCreator"):
 
     # --- Fungsi Panggil AI (Sama) ---
     async def _generate_rp_steps_with_ai(self, platform: str, macro_type: str, details: Dict, rp_context: str) -> List[Dict]:
+        # ... (kode fungsi AI sama) ...
         if not self.openai_client: raise ValueError("OpenAI client tidak diinisialisasi.")
         details_str = json.dumps(details, ensure_ascii=False)
         prompt = AI_RP_GENERATION_PROMPT.format(platform=platform, macro_type=macro_type.replace('_',' ').title(), details_str=details_str, rp_context=rp_context)
@@ -282,10 +285,12 @@ class TemplateCreatorCog(commands.Cog, name="TemplateCreator"):
             logger.error(f"Error saat memanggil OpenAI: {e}", exc_info=True)
             raise ValueError(f"Gagal menghubungi AI: {e}")
 
+
     # --- Perintah Panel (Sama) ---
     @commands.command(name="createtemplatepanel", aliases=["ctp"])
     @commands.has_permissions(administrator=True)
     async def create_template_panel(self, ctx: commands.Context):
+        # ... (kode perintah panel sama) ...
         embed = discord.Embed(title="🛠️ Pembuat Template KotkaHelper (AI)", description="Tekan tombol...", color=discord.Color.orange())
         embed.set_footer(text="Fitur ini menggunakan AI OpenAI.")
         class StartView(ui.View):
@@ -293,6 +298,7 @@ class TemplateCreatorCog(commands.Cog, name="TemplateCreator"):
             @ui.button(label="Buat Template (AI)", style=discord.ButtonStyle.success, emoji="✨", custom_id="start_template_creation_ai")
             async def start_button(self, interaction: discord.Interaction, button: ui.Button):
                 if not self.cog.openai_client: await interaction.response.send_message("❌ Fitur AI tidak aktif...", ephemeral=True); return
+                # [PERBAIKAN] Panggil workflow DENGAN interaction awal
                 await self.cog.start_template_workflow(interaction)
 
         view_exists = any(v.custom_id == "start_template_creation_ai" for v in self.bot.persistent_views for item in v.children if hasattr(item, 'custom_id') and item.custom_id == "start_template_creation_ai")
@@ -304,32 +310,47 @@ class TemplateCreatorCog(commands.Cog, name="TemplateCreator"):
         await ctx.send(embed=embed, view=StartView(self))
 
 
-    # --- Alur Kerja Utama (Direvisi Lagi) ---
+    # --- Alur Kerja Utama (Direvisi Lagi untuk Interaction Handling) ---
     async def start_template_workflow(self, interaction: discord.Interaction):
         author_id = interaction.user.id
-        # Simpan interaksi awal untuk mengedit pesan status akhir
+        # Simpan interaksi awal untuk mengedit pesan status akhir ATAU mengirim followup
         initial_interaction = interaction
+        # Variabel untuk menampung interaksi terbaru dari view/modal
+        current_interaction = interaction
 
         try:
             # 1. Pilih Platform
             platform_view = PlatformSelectView(author_id)
             # Respons pertama HARUS menggunakan interaction.response
-            await interaction.response.send_message("1️⃣ Pilih platform target:", view=platform_view, ephemeral=True)
-            await platform_view.wait()
-            if platform_view.platform is None: raise asyncio.TimeoutError("Pemilihan platform timeout.")
+            await current_interaction.response.send_message("1️⃣ Pilih platform target:", view=platform_view, ephemeral=True)
+            view_timed_out = await platform_view.wait()
+            if view_timed_out or platform_view.platform is None: raise asyncio.TimeoutError("Pemilihan platform timeout.")
             platform = platform_view.platform
             # Dapatkan interaction dari view ini untuk langkah berikutnya
-            platform_interaction = platform_view.interaction
+            current_interaction = platform_view.interaction # Interaction dari tombol platform
 
             # 2. Pilih Tipe Macro
             type_view = MacroTypeSelectView(author_id, platform)
             # Gunakan interaction DARI LANGKAH SEBELUMNYA untuk edit pesan
-            await platform_interaction.edit_original_response(content=f"Platform: **{platform}**. 2️⃣ Pilih jenis macro:", view=type_view)
-            await type_view.wait()
-            if type_view.macro_type is None: raise asyncio.TimeoutError("Pemilihan tipe macro timeout.")
+            # [PERBAIKAN] Pastikan interaction sebelumnya belum direspons untuk edit
+            if not current_interaction.response.is_done():
+                await current_interaction.response.edit_message(content=f"Platform: **{platform}**. 2️⃣ Pilih jenis macro:", view=type_view)
+            else: # Jika sudah (misalnya karena defer di view), gunakan followup
+                await current_interaction.followup.send(content=f"Platform: **{platform}**. 2️⃣ Pilih jenis macro:", view=type_view, ephemeral=True)
+                # Dapatkan pesan followup untuk diedit nanti (jika perlu) - ini agak rumit, coba edit original dulu
+                await asyncio.sleep(0.1) # Beri waktu sedikit
+                try:
+                    original_msg = await initial_interaction.original_response()
+                    await original_msg.edit(content=f"Platform: **{platform}**. 2️⃣ Pilih jenis macro:", view=type_view)
+                except Exception as e:
+                    logger.warning(f"Gagal edit original response setelah followup: {e}")
+
+
+            view_timed_out = await type_view.wait()
+            if view_timed_out or type_view.macro_type is None: raise asyncio.TimeoutError("Pemilihan tipe macro timeout.")
             macro_type = type_view.macro_type
             # Dapatkan interaction dari view ini
-            type_interaction = type_view.interaction
+            current_interaction = type_view.interaction # Interaction dari tombol tipe
 
             # 3. Isi Detail Spesifik (Modal)
             details_modal: Optional[ui.Modal] = None
@@ -342,41 +363,50 @@ class TemplateCreatorCog(commands.Cog, name="TemplateCreator"):
                 if macro_type == "auto_rp": details_modal = BaseDetailsModal("Detail Auto RP Macro (KHMobile)")
                 elif macro_type == "cmd": details_modal = CMD_Modal(platform)
                 elif macro_type == "gun": details_modal = GunRP_Modal(platform)
+
             if not details_modal: raise ValueError("Kombinasi platform & tipe macro tidak valid.")
 
             # Kirim modal menggunakan interaction DARI LANGKAH SEBELUMNYA
-            await type_interaction.response.send_modal(details_modal)
-            await details_modal.wait()
+            # [PERBAIKAN] Gunakan response.send_modal dari interaction terbaru
+            await current_interaction.response.send_modal(details_modal)
+            modal_timed_out = await details_modal.wait()
+            if modal_timed_out or not hasattr(details_modal, 'interaction'):
+                 raise asyncio.TimeoutError("Pengisian detail timeout atau modal error.")
             # Ambil data dan interaction dari modal yang baru saja selesai
-            if not hasattr(details_modal, 'interaction') or 'details' not in details_modal.interaction.data:
-                 raise asyncio.TimeoutError("Pengisian detail dibatalkan atau modal error.")
+            if 'details' not in details_modal.interaction.data:
+                raise asyncio.TimeoutError("Pengisian detail dibatalkan.")
             details = details_modal.interaction.data['details']
-            details_interaction = details_modal.interaction # Simpan interaction dari modal ini
+            current_interaction = details_modal.interaction # Interaction dari submit modal detail
 
             # 4. Input Konteks RP (Modal AI Baru)
             ai_context_modal = AIContextModal()
             # Kirim modal AI menggunakan interaction DARI MODAL SEBELUMNYA
-            await details_interaction.response.send_modal(ai_context_modal)
-            await ai_context_modal.wait()
-            if not hasattr(ai_context_modal, 'interaction') or 'rp_context' not in ai_context_modal.interaction.data:
-                 raise asyncio.TimeoutError("Pengisian deskripsi RP dibatalkan atau modal error.")
+            # [PERBAIKAN] Gunakan response.send_modal dari interaction terbaru
+            await current_interaction.response.send_modal(ai_context_modal)
+            modal_timed_out = await ai_context_modal.wait()
+            if modal_timed_out or not hasattr(ai_context_modal, 'interaction'):
+                raise asyncio.TimeoutError("Pengisian deskripsi RP timeout atau modal error.")
+            if 'rp_context' not in ai_context_modal.interaction.data:
+                raise asyncio.TimeoutError("Pengisian deskripsi RP dibatalkan.")
             rp_context = ai_context_modal.interaction.data['rp_context']
-            ai_interaction = ai_context_modal.interaction # Simpan interaction terakhir ini
+            current_interaction = ai_context_modal.interaction # Interaction terakhir dari submit modal AI
 
             # 5. Panggil AI untuk Generate Steps
-            # Edit pesan status menggunakan interaction terakhir
-            await ai_interaction.response.edit_message(content="⏳ Meminta AI membuat langkah-langkah RP...", view=None)
+            # [PERBAIKAN] Defer interaction terakhir SEBELUM memanggil AI
+            await current_interaction.response.defer(ephemeral=True, thinking=True)
+            # Edit pesan original dari interaksi awal untuk menunjukkan status
+            try: await initial_interaction.edit_original_response(content="⏳ Meminta AI membuat langkah-langkah RP...", view=None, attachments=[])
+            except discord.HTTPException: pass # Abaikan jika gagal edit (mungkin sudah dihapus)
+
             try:
                 final_steps = await self._generate_rp_steps_with_ai(platform, macro_type, details, rp_context)
             except ValueError as ai_error:
-                # Gunakan followup dari interaction terakhir jika edit_message gagal (sudah direspons)
-                try: await ai_interaction.edit_original_response(content=f"❌ Gagal mendapatkan langkah RP dari AI:\n{ai_error}", view=None)
-                except discord.InteractionResponded: await initial_interaction.followup.send(f"❌ Gagal mendapatkan langkah RP dari AI:\n{ai_error}", ephemeral=True)
+                # Gunakan followup dari interaction terakhir
+                await current_interaction.followup.send(f"❌ Gagal mendapatkan langkah RP dari AI:\n{ai_error}", ephemeral=True)
                 return
             except Exception as e:
                 logger.error(f"Error tak terduga saat generate AI steps: {e}", exc_info=True)
-                try: await ai_interaction.edit_original_response(content=f"❌ Terjadi error tak terduga saat menghubungi AI: {e}", view=None)
-                except discord.InteractionResponded: await initial_interaction.followup.send(f"❌ Terjadi error tak terduga saat menghubungi AI: {e}", ephemeral=True)
+                await current_interaction.followup.send(f"❌ Terjadi error tak terduga saat menghubungi AI: {e}", ephemeral=True)
                 return
 
             # 6. Generate & Send Template
@@ -388,42 +418,38 @@ class TemplateCreatorCog(commands.Cog, name="TemplateCreator"):
                 f"**Pratinjau Langkah RP:**\n{steps_preview}\n\n"
                 f"Silakan unduh file `{template_filename}` di bawah dan salin isinya ke file KotkaHelper yang sesuai."
             )
-            # Gunakan interaction terakhir untuk mengirim hasil
-            # Coba edit dulu, kalau gagal (karena sudah direspons), pakai followup
-            try:
-                await ai_interaction.edit_original_response(
-                    content=result_message,
-                    attachments=[template_file],
-                    view=None
-                )
-            except discord.InteractionResponded:
-                # Jika edit gagal, gunakan followup dari interaksi AWAL
-                await initial_interaction.followup.send(
-                    content=result_message,
-                    file=template_file,
-                    ephemeral=True # Hasil akhir tetap ephemeral
-                 )
+            # Gunakan followup dari interaction terakhir untuk mengirim hasil
+            await current_interaction.followup.send(
+                content=result_message,
+                file=template_file,
+                ephemeral=True # Hasil akhir tetap ephemeral
+            )
+            # Hapus pesan status awal jika masih ada
+            try: await initial_interaction.edit_original_response(content="Proses selesai.", view=None, attachments=[])
+            except discord.HTTPException: pass
 
             logger.info(f"User {interaction.user} berhasil membuat template AI: {template_filename}")
 
         except asyncio.TimeoutError as e:
             logger.warning(f"Workflow template dibatalkan atau timeout: {e}")
+            error_message = f"❌ Pembuatan template dibatalkan karena waktu habis."
             try:
                 # Coba edit pesan dari interaksi awal
-                await initial_interaction.edit_original_response(content=f"❌ Pembuatan template dibatalkan karena waktu habis.", view=None, attachments=[])
-            except (discord.NotFound, discord.InteractionResponded):
-                # Jika gagal edit, coba kirim followup ephemeral
-                try: await initial_interaction.followup.send(f"❌ Pembuatan template dibatalkan karena waktu habis.", ephemeral=True)
-                except Exception as fe: logger.error(f"Gagal mengirim pesan timeout followup: {fe}")
+                 await initial_interaction.edit_original_response(content=error_message, view=None, attachments=[])
+            except (discord.NotFound, discord.InteractionResponded, discord.HTTPException):
+                 # Jika gagal edit, coba kirim followup ephemeral dari interaksi terakhir yg valid
+                 try: await current_interaction.followup.send(error_message, ephemeral=True)
+                 except Exception as fe: logger.error(f"Gagal mengirim pesan timeout followup: {fe}")
             except Exception as inner_e: logger.error(f"Error saat edit pesan timeout: {inner_e}")
         except Exception as e:
             logger.error(f"Error selama workflow template: {e}", exc_info=True)
+            error_message = f"❌ Terjadi error: {e}"
             try:
                 # Coba edit pesan dari interaksi awal
-                 await initial_interaction.edit_original_response(content=f"❌ Terjadi error: {e}", view=None, attachments=[])
-            except (discord.NotFound, discord.InteractionResponded):
-                 # Jika gagal edit, coba kirim followup ephemeral
-                 try: await initial_interaction.followup.send(f"❌ Terjadi error: {e}", ephemeral=True)
+                 await initial_interaction.edit_original_response(content=error_message, view=None, attachments=[])
+            except (discord.NotFound, discord.InteractionResponded, discord.HTTPException):
+                 # Jika gagal edit, coba kirim followup ephemeral dari interaksi terakhir yg valid
+                 try: await current_interaction.followup.send(error_message, ephemeral=True)
                  except Exception as fe: logger.error(f"Gagal mengirim pesan error followup: {fe}")
             except Exception as inner_e: logger.error(f"Error saat edit pesan error: {inner_e}")
 
