@@ -52,6 +52,7 @@ ATURAN WAJIB (Gunakan Bahasa: "{language}"):
 6.  JANGAN berbohong di /do (OOC lie).
 7.  Rp tidak harus ada pertanyaan!!, jangan semuanya ada pertanyaan, sesuai konteks aja
 8.  Jika di suruh ada rp make cmd selain /me /do ikutin saja karna ada beberapa yag make /m ( megapon ) /r (radio) /ame /ado dll sesuaikan dengan permintaan user
+9. tidak setiap /me lanjutannya selalu /do bisa saja /me beberapa kali dan /do sekali atau sebaliknya contoh /do proses 1-3 dll
 
 LARANGAN (JANGAN DILAKUKAN):
 - Force RP: "/me memukul John hingga pingsan" ❌
