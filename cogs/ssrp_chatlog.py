@@ -5,109 +5,18 @@ from discord import ui
 import logging
 import io
 import base64
-from PIL import Image, ImageDraw, ImageFilter # Pillow HANYA untuk composite
+from PIL import Image, ImageDraw, ImageFont, ImageFilter
 from openai import AsyncOpenAI
 from typing import List, Dict, Optional, Tuple
 import asyncio
 import re
-import os
-import json
-import time
-
-# --- IMPORT BARU UNTUK PEROMBAKAN TOTAL ---
-from selenium import webdriver
-from selenium.webdriver.chrome.service import Service
-from selenium.webdriver.common.by import By
-from selenium.webdriver.support.ui import WebDriverWait
-from selenium.webdriver.support import expected_conditions as EC
-from webdriver_manager.chrome import ChromeDriverManager
-from selenium.webdriver.chrome.options import Options
+import os # Untuk mencari font
+import json # <<< DIPERLUKAN UNTUK MEMPROSES RESPON AI >>>
 
 logger = logging.getLogger(__name__)
 
-# --- PENGATURAN DRIVER BROWSER ---
-try:
-    # Menginstal/Manage ChromeDriver secara otomatis
-    DRIVER_SERVICE = Service(ChromeDriverManager().install())
-    DRIVER_OPTIONS = Options()
-    DRIVER_OPTIONS.add_argument("--headless") # Wajib, berjalan di background
-    DRIVER_OPTIONS.add_argument("--no-sandbox")
-    DRIVER_OPTIONS.add_argument("--disable-dev-shm-usage")
-    # Atur ukuran window yang konsisten. Penting untuk word-wrapping!
-    # Kita set lebar 900px, cukup untuk chatlog (width: 850px) + padding
-    DRIVER_OPTIONS.add_argument("--window-size=900,1000") 
-    DRIVER_OPTIONS.add_argument("--force-device-scale-factor=1") # Paksa skala 1:1
-    DRIVER_OPTIONS.add_argument("--high-dpi-support=1")
-    DRIVER_OPTIONS.add_argument("--log-level=3") # Kurangi log spam dari selenium
-    
-    # CSS TEPAT SEPERTI CHATLOG-MAGICIAN (app.css) + STYLE SAMP
-    # Ini adalah "logika" yang Anda minta, diekstrak ke string HTML.
-    SAMP_CHATLOG_HTML_TEMPLATE = """
-    <html>
-    <head>
-        <style>
-            body {{
-                background-color: transparent; /* Transparan total */
-                margin: 0;
-                padding: 0;
-            }}
-
-            /* Ini diekstrak dari app.css .output (LOGIKA FONT UTAMA) */
-            #chatlog-container {{
-                /* Ukuran container, sesuaikan jika perlu */
-                width: 850px; 
-                padding: 5px; /* Padding kecil agar shadow tidak terpotong */
-                
-                /* INI ADALAH FONT SAMP DARI CHATLOG-MAGICIAN */
-                font-family: Arial, sans-serif;
-                line-height: 0; /* Penting untuk rendering SAMP */
-                -webkit-font-smoothing: none !important; /* WAJIB */
-                font-weight: 700; /* WAJIB */
-                text-shadow: -1px -1px 0 #000, 1px -1px 0 #000, -1px 1px 0 #000, 1px 1px 0 #000; /* WAJIB */
-                letter-spacing: 0; /* WAJIB */
-                font-size: 12px; /* WAJIB */
-                
-                /* Lainnya */
-                overflow-wrap: break-word;
-                word-wrap: break-word;
-            }}
-
-            .chat-line {{
-                /* Beri jarak antar baris secara manual, karena line-height: 0 */
-                margin-bottom: 12px; 
-            }}
-
-            /* Ini adalah warna dari LOGIKA LAMA (Pillow) Anda, sekarang di CSS */
-            .chat-line.chat {{
-                color: {color_chat}; /* #FFFFFF */
-            }}
-            .chat-line.me {{
-                color: {color_me}; /* #C2A2DA */
-            }}
-            .chat-line.do {{
-                color: {color_do}; /* #99CCFF */
-            }}
-            .chat-line.ooc {{
-                color: {color_ooc}; /* #AAAAAA */
-            }}
-        </style>
-    </head>
-    <body>
-        <div id="chatlog-container">
-            {dialog_lines_html}
-        </div>
-    </body>
-    </html>
-    """
-
-except Exception as e:
-    logger.critical(f"GAGAL MENGINSTALL/SETUP SELENIUM/CHROMEDRIVER: {e}")
-    logger.critical("Fitur SSRP tidak akan berfungsi sampai error ini diperbaiki.")
-    DRIVER_SERVICE = None
-
-
 # ============================
-# MODAL & VIEW COMPONENTS (TIDAK BERUBAH)
+# MODAL & VIEW COMPONENTS (REVISED)
 # ============================
 
 class SSRPInfoModal(ui.Modal, title="Informasi Bersama untuk SSRP"):
@@ -353,7 +262,6 @@ class SSRPChatlogCog(commands.Cog, name="SSRPChatlog"):
 
     def __init__(self, bot):
         self.bot = bot
-        self.driver = None # Placeholder untuk driver
 
         # Setup OpenAI client
         if not self.bot.config.OPENAI_API_KEYS:
@@ -364,30 +272,53 @@ class SSRPChatlogCog(commands.Cog, name="SSRPChatlog"):
             self.client = AsyncOpenAI(api_key=self.bot.config.OPENAI_API_KEYS[0])
             logger.info("✅ OpenAI client untuk SSRP Chatlog berhasil diinisialisasi")
 
-        # --- Pengaturan Warna (diambil dari logika Pillow Anda sebelumnya) ---
-        # Ini akan di-inject ke dalam CSS
-        self.COLOR_CHAT = "#FFFFFF" # Putih
-        self.COLOR_ME = "#C2A2DA"   # Ungu/Pink
-        self.COLOR_DO = "#99CCFF"   # Biru Muda
-        self.COLOR_OOC = "#AAAAAA"  # Abu-abu
-        self.BG_COLOR = (0, 0, 0, 128) # Pillow-style tuple (R,G,B,A)
+        # --- Pengaturan Font & Warna (Disesuaikan) ---
+        self.FONT_SIZE = 14 # Ukuran font diperkecil
+        self.LINE_HEIGHT = 18 # Tinggi baris disesuaikan
+        self.FONT_PATH = self._find_font(["arial.ttf", "Arial.ttf", "LiberationSans-Regular.ttf", "DejaVuSans.ttf"]) # Cari Arial dulu
+        self.COLOR_CHAT = (255, 255, 255) # Putih
+        self.COLOR_ME = (194, 162, 218)   # Ungu/Pink (#C2A2DA)
+        self.COLOR_DO = (153, 204, 255)   # Biru Muda (#99CCFF)
+        self.COLOR_OOC = (170, 170, 170)   # Abu-abu (#AAAAAA) - Opsional jika AI generate
+        self.COLOR_SHADOW = (0, 0, 0)     # Hitam untuk shadow
+        self.BG_COLOR = (0, 0, 0, 128)    # Hitam semi-transparan (alpha 128/255)
+        self.SHADOW_OFFSET = (1, 1)       # Shadow 1px ke kanan bawah
 
-        # Inisialisasi WebDriver
-        if DRIVER_SERVICE:
-            try:
-                logger.info("Menginisialisasi Headless Chrome Driver...")
-                self.driver = webdriver.Chrome(service=DRIVER_SERVICE, options=DRIVER_OPTIONS)
-                logger.info("✅ Headless Chrome Driver berhasil diinisialisasi.")
-            except Exception as e:
-                logger.critical(f"GAGAL MENGINISIALISASI DRIVER CHROME: {e}")
-        else:
-            logger.critical("Driver Service tidak tersedia. SSRP Cog tidak akan berfungsi.")
-            
-    def cog_unload(self):
-        # Mematikan driver saat cog dimatikan
-        if self.driver:
-            logger.info("Mematikan Headless Chrome Driver...")
-            self.driver.quit()
+        # Load font
+        try:
+            self.font = ImageFont.truetype(self.FONT_PATH, self.FONT_SIZE)
+            logger.info(f"✅ Font '{self.FONT_PATH}' berhasil dimuat untuk SSRP.")
+        except IOError:
+            logger.warning(f"Font SSRP ({self.FONT_PATH}) tidak ditemukan, menggunakan font default Pillow.")
+            self.font = ImageFont.load_default() # Fallback
+
+    def _find_font(self, font_names: List[str]) -> str:
+        """Mencari path font yang valid dari daftar nama."""
+        font_dirs = []
+        if os.name == 'nt': # Windows
+            font_dirs.append(os.path.join(os.environ.get('WINDIR', 'C:\\Windows'), 'Fonts'))
+        elif os.name == 'posix': # Linux/macOS
+            font_dirs.extend(['/usr/share/fonts/truetype', '/usr/local/share/fonts', os.path.expanduser('~/.fonts')])
+            # macOS specific paths might be needed if the above don't work
+            font_dirs.append('/Library/Fonts')
+            font_dirs.append(os.path.expanduser('~/Library/Fonts'))
+
+        for name in font_names:
+            for dir_path in font_dirs:
+                font_path = os.path.join(dir_path, name)
+                # Check subdirectories common in Linux
+                if os.name == 'posix':
+                    subdirs = ["dejavu", "msttcorefonts", "liberation", "ubuntu"]
+                    for subdir in subdirs:
+                         sub_path = os.path.join(dir_path, subdir, name)
+                         if os.path.exists(sub_path): return sub_path
+
+                if os.path.exists(font_path):
+                    return font_path # Kembalikan path pertama yang ditemukan
+
+        # Jika tidak ketemu, kembalikan nama pertama sebagai fallback (akan error di ImageFont.truetype tapi log warning)
+        logger.warning(f"Tidak dapat menemukan font: {font_names} di direktori {font_dirs}. Akan coba default Pillow.")
+        return font_names[0]
 
     @commands.command(name="buatssrp", aliases=["createssrp"])
     async def create_ssrp(self, ctx: commands.Context):
@@ -403,10 +334,6 @@ class SSRPChatlogCog(commands.Cog, name="SSRPChatlog"):
 
         if not self.client:
             await ctx.send("❌ Fitur SSRP Chatlog tidak tersedia (API Key belum dikonfigurasi)")
-            return
-            
-        if not self.driver:
-            await ctx.send("❌ Fitur SSRP Chatlog mengalami error (Headless Browser gagal dimuat). Harap cek log bot.")
             return
 
         # Cek lampiran
@@ -479,6 +406,7 @@ class SSRPChatlogCog(commands.Cog, name="SSRPChatlog"):
 
         try:
             # Edit pesan ephemeral yang dikirim dari FinishButton callback
+            # Pesan ini hanya terlihat oleh pengguna yang menekan tombol
             await interaction.edit_original_response(
                  content=f"⏳ Memulai proses untuk {len(images_bytes_list)} gambar dengan AI...",
                  view=None, embed=None, attachments=[]
@@ -487,6 +415,7 @@ class SSRPChatlogCog(commands.Cog, name="SSRPChatlog"):
             processing_msg = await interaction.channel.send(f"⏳ {interaction.user.mention} sedang memproses {len(images_bytes_list)} gambar SSRP...")
 
         except discord.NotFound:
+            # Jika pesan ephemeral tidak ditemukan (misal timeout > 15 menit), kirim pesan publik baru
             processing_msg = await interaction.channel.send(f"⏳ {interaction.user.mention} memulai proses {len(images_bytes_list)} gambar SSRP...")
         except Exception as e:
              logger.error(f"Error saat edit initial process_ssrp message: {e}")
@@ -494,71 +423,44 @@ class SSRPChatlogCog(commands.Cog, name="SSRPChatlog"):
              return
 
         try:
-            start_total_time = time.time()
-            
-            # 1. Generate dialog dengan AI (Tidak berubah)
+            # 1. Generate dialog dengan AI
             await processing_msg.edit(content=f"🧠 {interaction.user.mention}, AI sedang membuat dialog...")
+
+            # Extract language from info_data
             language = info_data.get('language', 'Bahasa Indonesia baku')
 
             all_dialogs_raw = await self.generate_dialogs_with_ai(
                 images_bytes_list,
                 info_data,
                 dialog_counts,
-                language
+                language # Pass language to AI
             )
 
-            # 2. Process setiap gambar (INI YANG DIROMBAK)
+            # 2. Process setiap gambar
             processed_images_bytes = []
-            loop = self.bot.loop
-
             for idx, (img_bytes, raw_dialogs, position, bg_style) in enumerate(zip(images_bytes_list, all_dialogs_raw, positions, background_styles)):
 
+                # Pastikan dialog tidak melebihi jumlah yang diminta untuk gambar ini
                 limited_dialogs = raw_dialogs[:dialog_counts[idx]]
 
                 await processing_msg.edit(
-                    content=f"🎨 {interaction.user.mention}, merender gambar {idx + 1}/{len(images_bytes_list)} ({len(limited_dialogs)} baris)..."
-                )
-                
-                start_render_time = time.time()
-
-                # --- LOGIKA PEROMBAKAN TOTAL ---
-                
-                # 2a. Buat HTML dari dialogs (Blocking, run di executor)
-                #    Fungsi ini (generate_samp_html) adalah FUNGSI BARU
-                generated_html = await loop.run_in_executor(
-                    None, self.generate_samp_html, limited_dialogs
+                    content=f"🎨 {interaction.user.mention}, memproses gambar {idx + 1}/{len(images_bytes_list)} ({len(limited_dialogs)} baris)..."
                 )
 
-                # 2b. Screenshot HTML menggunakan Selenium (Blocking, run di executor)
-                #    Fungsi ini (screenshot_html_with_selenium) adalah FUNGSI BARU
-                chatlog_screenshot_bytes = await loop.run_in_executor(
-                    None, self.screenshot_html_with_selenium, generated_html
-                )
-                
-                if not chatlog_screenshot_bytes:
-                    logger.error(f"Gagal screenshot HTML untuk gambar {idx+1}")
-                    raise Exception(f"Gagal screenshot HTML (gambar {idx+1})")
-
-                # 2c. Composite gambar (Blocking, run di executor)
-                #    Fungsi ini (composite_image) adalah FUNGSI BARU
-                processed_img = await loop.run_in_executor(
-                    None, self.composite_image,
+                # Tambahkan dialog ke gambar
+                processed_img = await self.add_dialogs_to_image(
                     img_bytes,
-                    chatlog_screenshot_bytes,
+                    limited_dialogs,
                     position,
-                    bg_style
+                    bg_style # Pass background style
                 )
-                
-                # --- AKHIR LOGIKA PEROMBAKAN ---
-                
                 processed_images_bytes.append(processed_img)
-                logger.info(f"Gambar {idx+1} selesai dirender dalam {time.time() - start_render_time:.2f} detik.")
-                await asyncio.sleep(0.1) # Bernapas sejenak
+
+                await asyncio.sleep(0.5) # Delay kecil antar gambar
 
             # 3. Kirim hasil
-            end_total_time = time.time()
             await processing_msg.edit(
-                content=f"✅ Selesai! {len(processed_images_bytes)} SSRP untuk {interaction.user.mention} dibuat dalam {end_total_time - start_total_time:.2f} detik."
+                content=f"✅ Selesai! Hasil SSRP untuk {interaction.user.mention}:"
             )
 
             # Kirim gambar dalam chunk (max 10 per pesan Discord)
@@ -598,7 +500,7 @@ class SSRPChatlogCog(commands.Cog, name="SSRPChatlog"):
         dialog_counts: List[int],
         language: str # Parameter bahasa baru
     ) -> List[List[str]]:
-        """Generate dialog SSRP SAMP yang benar menggunakan AI (TIDAK BERUBAH)"""
+        """Generate dialog SSRP SAMP yang benar menggunakan AI"""
 
         # Kirim hanya gambar pertama sebagai konteks visual
         base64_img = base64.b64encode(images_bytes_list[0]).decode('utf-8')
@@ -641,8 +543,8 @@ class SSRPChatlogCog(commands.Cog, name="SSRPChatlog"):
 
         ATURAN FORMAT SANGAT PENTING (Gunakan Bahasa: {language}):
         1.  Obrolan Normal (IC): `Nama_Karakter: Dialognya disini.` (Gunakan underscore di nama, AKHIRI DENGAN TITIK)
-        2.  Aksi /me: `*Nama_Karakter melakukan aksi.` (Diawali bintang+spasi, nama pakai underscore, AKHIRI DENGAN TITIK)
-        3.  Deskripsi /do: `*Deskripsi keadaan atau hasil aksi. (( Nama_Karakter ))` (Diawali dua bintang+spasi, nama pakai underscore di akhir dalam kurung OOC, AKHIRI DENGAN TITIK sebelum kurung)
+        2.  Aksi /me: `* Nama_Karakter melakukan aksi.` (Diawali bintang+spasi, nama pakai underscore, AKHIRI DENGAN TITIK)
+        3.  Deskripsi /do: `** Deskripsi keadaan atau hasil aksi. (( Nama_Karakter ))` (Diawali dua bintang+spasi, nama pakai underscore di akhir dalam kurung OOC, AKHIRI DENGAN TITIK sebelum kurung)
         4.  Gunakan nama karakter PERSIS seperti ini: {', '.join(char_names_formatted)}
 
         FORMAT OUTPUT JSON (WAJIB HANYA JSON):
@@ -714,180 +616,141 @@ class SSRPChatlogCog(commands.Cog, name="SSRPChatlog"):
         logger.info(f"AI generated dialogs for {len(dialogs_list)} images.")
         return dialogs_list
 
-    # ==========================================================
-    # --- FUNGSI RENDERING BARU (PENGGANTI FUNGSI PILLOW) ---
-    # ==========================================================
-
-    def generate_samp_html(self, dialogs: List[str]) -> str:
-        """
-        FUNGSI BARU: Mengubah list dialog AI menjadi HTML dengan CSS yang tepat.
-        Ini adalah inti dari logika parser "chatlog-magician" yang Anda inginkan.
-        """
-        
-        dialog_lines_html = []
-        
-        for text in dialogs:
-            text = text.strip()
-            if not text:
-                continue
-
-            css_class = ""
-            
-            # Tentukan warna (logika dari get_text_color lama Anda)
-            if text.startswith('**'):
-                css_class = "do"
-            elif text.startswith('*'):
-                css_class = "me"
-            elif text.startswith('(('):
-                 css_class = "ooc"
-            else:
-                css_class = "chat"
-
-            # Bersihkan nama (logika dari draw_text_with_shadow lama Anda)
-            cleaned_text = text
-            if ':' in text and not text.startswith('*'):
-                try:
-                    parts = text.split(':', 1)
-                    name = parts[0].replace('_', ' ')
-                    dialog = parts[1]
-                    cleaned_text = f"{name}:{dialog}"
-                except Exception:
-                    pass # Biarkan teks apa adanya jika split gagal
-            
-            # Ganti karakter HTML spesial agar tidak merusak render
-            cleaned_text = cleaned_text.replace("<", "&lt;").replace(">", "&gt;")
-
-            # Buat tag HTML
-            dialog_lines_html.append(f'<div class="chat-line {css_class}">{cleaned_text}</div>')
-
-        # Gabungkan semua baris dialog
-        final_dialog_html = "\n".join(dialog_lines_html)
-        
-        # Masukkan ke template utama
-        full_html = SAMP_CHATLOG_HTML_TEMPLATE.format(
-            color_chat=self.COLOR_CHAT,
-            color_me=self.COLOR_ME,
-            color_do=self.COLOR_DO,
-            color_ooc=self.COLOR_OOC,
-            dialog_lines_html=final_dialog_html
-        )
-        
-        return full_html
-
-    def screenshot_html_with_selenium(self, html_content: str) -> Optional[bytes]:
-        """
-        FUNGSI BARU: Me-render HTML di headless browser dan mengambil screenshot.
-        Ini adalah inti dari logika rendering "chatlog-magician".
-        """
-        if not self.driver:
-            logger.error("Driver Selenium tidak aktif, screenshot dibatalkan.")
-            return None
-            
-        try:
-            # Muat HTML string ke browser
-            self.driver.get(f"data:text/html;charset=utf-8,{html_content}")
-            
-            # Tunggu hingga elemen #chatlog-container ada dan terlihat
-            wait = WebDriverWait(self.driver, 5) # Tunggu maks 5 detik
-            container = wait.until(
-                EC.visibility_of_element_located((By.ID, "chatlog-container"))
-            )
-            
-            # Ambil screenshot HANYA dari elemen container
-            # Ini akan menghasilkan gambar PNG transparan
-            screenshot_bytes = container.screenshot_as_png
-            
-            return screenshot_bytes
-            
-        except Exception as e:
-            logger.error(f"Error saat screenshot Selenium: {e}", exc_info=True)
-            return None
-
-    def composite_image(
+    async def add_dialogs_to_image(
         self,
         image_bytes: bytes,
-        overlay_bytes: bytes,
+        dialogs: List[str],
         position: str,
-        background_style: str
+        background_style: str # Parameter baru
     ) -> bytes:
-        """
-        FUNGSI BARU (Revisi): Menggabungkan gambar (Pillow) dengan screenshot (Selenium).
-        """
+        """Tambahkan dialog ke gambar DENGAN BENAR (overlay opsional, drop shadow)"""
+
         try:
-            # Buka gambar utama
-            base_img = Image.open(io.BytesIO(image_bytes)).convert("RGBA")
-            width, height = base_img.size
+            # Buka gambar dan pastikan format RGBA untuk overlay transparan
+            img = Image.open(io.BytesIO(image_bytes)).convert("RGBA")
+            width, height = img.size
 
-            # Buka screenshot chatlog
-            overlay_img = Image.open(io.BytesIO(overlay_bytes)).convert("RGBA")
-            overlay_width, overlay_height = overlay_img.size
+            # Buat layer overlay transparan seukuran gambar asli
+            txt_overlay = Image.new('RGBA', img.size, (255, 255, 255, 0))
+            draw = ImageDraw.Draw(txt_overlay)
 
-            # Buat canvas final
-            final_img = Image.new("RGBA", base_img.size)
-            final_img.paste(base_img, (0, 0)) # Tempel gambar asli
-            
-            # Layer untuk background (jika perlu)
-            bg_layer = Image.new('RGBA', base_img.size, (255, 255, 255, 0))
-            bg_draw = ImageDraw.Draw(bg_layer)
+            padding = 10 # Padding dari tepi gambar/background
 
-            # --- Logika Penempatan ---
-            padding = 10 # Padding dari tepi
-            
-            # Tentukan area untuk background dan posisi Y untuk teks
-            pos_y_list = [] # (y_coord)
-            bg_rect_list = [] # [(x1, y1, x2, y2)]
-            
-            if position == "atas":
-                bg_rect_list.append((0, 0, width, overlay_height + (padding * 2)))
-                pos_y_list.append(padding)
-            elif position == "bawah":
-                bg_rect_list.append((0, height - overlay_height - (padding * 2), width, height))
-                pos_y_list.append(height - overlay_height - padding)
-            else: # split
-                # Hitung dialog split (asumsi screenshot dibagi 2)
-                # Ini tidak sempurna, tapi perkiraan terbaik tanpa info dialog
-                half_height = overlay_height // 2
-                
-                # Area Atas
-                bg_rect_list.append((0, 0, width, half_height + (padding * 2)))
-                pos_y_list.append(padding)
-                
-                # Area Bawah
-                bg_rect_list.append((0, height - half_height - (padding * 2), width, height))
-                pos_y_list.append(height - half_height - padding)
+            # Tentukan posisi Y dan gambar background jika 'overlay' dipilih
+            y_coords = [] # Simpan y awal untuk setiap bagian (atas/bawah)
 
-            # 1. Gambar Background jika 'overlay'
             if background_style == "overlay":
-                for rect in bg_rect_list:
-                    bg_draw.rectangle(rect, fill=self.BG_COLOR)
-                # Gabungkan background dulu
-                final_img = Image.alpha_composite(final_img, bg_layer)
+                if position == "atas":
+                    dialog_height = (len(dialogs) * self.LINE_HEIGHT) + (padding * 2)
+                    bg_y_end = min(dialog_height, height) # Pastikan tidak melebihi tinggi gambar
+                    draw.rectangle([(0, 0), (width, bg_y_end)], fill=self.BG_COLOR)
+                    y_coords.append(padding)
+                elif position == "bawah":
+                    dialog_height = (len(dialogs) * self.LINE_HEIGHT) + (padding * 2)
+                    bg_y_start = max(0, height - dialog_height) # Pastikan tidak negatif
+                    draw.rectangle([(0, bg_y_start), (width, height)], fill=self.BG_COLOR)
+                    y_coords.append(bg_y_start + padding)
+                else:  # split
+                    half_point = (len(dialogs) + 1) // 2
+                    top_dialogs = dialogs[:half_point]
+                    bottom_dialogs = dialogs[half_point:]
 
-            # 2. Tempel Screenshot Teks
+                    # Background Atas
+                    top_height = (len(top_dialogs) * self.LINE_HEIGHT) + (padding * 2)
+                    bg_top_end = min(top_height, height)
+                    draw.rectangle([(0, 0), (width, bg_top_end)], fill=self.BG_COLOR)
+                    y_coords.append(padding)
+
+                    # Background Bawah
+                    bottom_height = (len(bottom_dialogs) * self.LINE_HEIGHT) + (padding * 2)
+                    bg_bottom_start = max(0, height - bottom_height)
+                    draw.rectangle([(0, bg_bottom_start), (width, height)], fill=self.BG_COLOR)
+                    y_coords.append(bg_bottom_start + padding)
+            else: # background_style == "transparent"
+                 # Tentukan y_start tanpa menggambar background
+                 if position == "atas":
+                     y_coords.append(padding)
+                 elif position == "bawah":
+                     # Perkirakan tinggi dialog untuk menempatkan di bawah
+                     dialog_height_estimate = (len(dialogs) * self.LINE_HEIGHT) + padding
+                     y_start_bawah = max(padding, height - dialog_height_estimate) # Mulai dari bawah atau padding atas
+                     y_coords.append(y_start_bawah)
+                 else: # split (transparent)
+                     half_point = (len(dialogs) + 1) // 2
+                     # Y atas
+                     y_coords.append(padding)
+                     # Y bawah (perkirakan tinggi dialog bawah)
+                     bottom_height_estimate = (len(dialogs[half_point:]) * self.LINE_HEIGHT) + padding
+                     y_start_bawah_split = max(padding, height - bottom_height_estimate)
+                     y_coords.append(y_start_bawah_split)
+
+            # Draw dialogs
             if position == "split":
-                # Potong gambar screenshot menjadi 2
-                half_point = overlay_height // 2
-                top_overlay = overlay_img.crop((0, 0, overlay_width, half_point))
-                bottom_overlay = overlay_img.crop((0, half_point, overlay_width, overlay_height))
-                
-                # Tempel Atas
-                final_img.paste(top_overlay, (padding, pos_y_list[0]), top_overlay)
-                # Tempel Bawah
-                final_img.paste(bottom_overlay, (padding, pos_y_list[1]), bottom_overlay)
-            else:
-                # Tempel penuh (atas atau bawah)
-                final_img.paste(overlay_img, (padding, pos_y_list[0]), overlay_img)
+                half = (len(dialogs) + 1) // 2
+                # Top dialogs
+                y_pos_top = y_coords[0]
+                for dialog in dialogs[:half]:
+                    self.draw_text_with_shadow(draw, (padding, y_pos_top), dialog, self.font)
+                    y_pos_top += self.LINE_HEIGHT
+                # Bottom dialogs
+                y_pos_bottom = y_coords[1]
+                for dialog in dialogs[half:]:
+                    self.draw_text_with_shadow(draw, (padding, y_pos_bottom), dialog, self.font)
+                    y_pos_bottom += self.LINE_HEIGHT
+            else: # atas atau bawah
+                y_pos = y_coords[0]
+                for dialog in dialogs:
+                    self.draw_text_with_shadow(draw, (padding, y_pos), dialog, self.font)
+                    y_pos += self.LINE_HEIGHT
 
-            # Simpan hasil akhir sebagai JPEG
+            # Gabungkan gambar asli dengan overlay teks
+            # Ini menempelkan txt_overlay (yang berisi teks dan mungkin background) di atas img asli
+            out_img = Image.alpha_composite(img, txt_overlay)
+
+            # Convert kembali ke bytes (simpan sebagai JPEG)
             output = io.BytesIO()
-            final_img.convert("RGB").save(output, format='JPEG', quality=95) # Kualitas 95
+            # Convert ke RGB sebelum save JPEG, kualitas 90
+            out_img.convert("RGB").save(output, format='JPEG', quality=90)
             output.seek(0)
             return output.getvalue()
 
         except Exception as e:
-            logger.error(f"Error di composite_image: {e}", exc_info=True)
+            logger.error(f"Error di add_dialogs_to_image: {e}", exc_info=True)
             # Kembalikan gambar asli jika error
             return image_bytes
+
+    def get_text_color(self, text: str) -> tuple:
+        """Tentukan warna teks berdasarkan format SSRP"""
+        text = text.strip()
+        if text.startswith('**'): return self.COLOR_DO # Cek /do dulu karena diawali '*' juga
+        if text.startswith('*'): return self.COLOR_ME
+        if text.startswith('(('): return self.COLOR_OOC # Opsional
+        # Default chat color
+        return self.COLOR_CHAT
+
+    def draw_text_with_shadow(self, draw: ImageDraw.ImageDraw, pos: Tuple[int, int], text: str, font: ImageFont.FreeTypeFont):
+        """Gambar teks dengan drop shadow 1px"""
+        x, y = pos
+        shadow_pos = (x + self.SHADOW_OFFSET[0], y + self.SHADOW_OFFSET[1])
+        text_color = self.get_text_color(text)
+
+        cleaned_text = text # Teks yang akan digambar
+
+        # Ganti underscore di nama karakter menjadi spasi HANYA untuk tampilan chat biasa
+        # Contoh: John_Doe: -> John Doe:
+        # TIDAK berlaku untuk /me atau /do
+        if ':' in text and not text.startswith('*'):
+            parts = text.split(':', 1)
+            name = parts[0].replace('_', ' ')
+            dialog = parts[1]
+            cleaned_text = f"{name}:{dialog}"
+            # Jika ingin warna nama berbeda, bisa di-split dan draw terpisah di sini
+
+        # 1. Gambar bayangan
+        draw.text(shadow_pos, cleaned_text, font=font, fill=self.COLOR_SHADOW)
+        # 2. Gambar teks utama
+        draw.text(pos, cleaned_text, font=font, fill=text_color)
+
 
 async def setup(bot):
     await bot.add_cog(SSRPChatlogCog(bot))
