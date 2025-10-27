@@ -152,12 +152,14 @@ class DialogCountSelect(ui.Select):
 
 class PositionSelect(ui.Select):
     """Select untuk posisi dialog"""
-    
+
     def __init__(self, parent_view):
         options = [
             discord.SelectOption(label="Atas", value="atas", emoji="⬆️"),
             discord.SelectOption(label="Bawah", value="bawah", emoji="⬇️"),
-            discord.SelectOption(label="Split (Atas & Bawah)", value="split", emoji="⬆️⬇️")
+            # --- PERBAIKAN DI SINI: Hapus emoji gabungan ---
+            discord.SelectOption(label="Split (Atas & Bawah)", value="split")
+            # ----------------------------------------------
         ]
         super().__init__(
             placeholder="Pilih posisi dialog",
@@ -165,7 +167,7 @@ class PositionSelect(ui.Select):
             row=1
         )
         self.parent_view = parent_view
-    
+
     async def callback(self, interaction: discord.Interaction):
         self.parent_view.positions[self.parent_view.current_image] = self.values[0]
         await self.parent_view.update_message(interaction)
