@@ -26,7 +26,26 @@ ATURAN WAIB (Gunakan Bahasa/Aksen: "{language}"):
 4. Sertakan delay antara 2-4 detik per langkah (sesuaikan logisnya aksi).
 5. Jangan gunakan: emoji, force RP, undetailed RP.
 6. Maksimal 100 karakter per langkah/command.
+7. BUAT RP YANG SESUAI DENGAN KETENTUAN GTA SAMP. DAN SESUAIKAN DENGAN ROLEPLAY YANG BISANYA DI GTA SA-MP
+8. Buat sesuai kondisi roleplay di GTA SAMP dan tidak ada hal hal yang di lebihkan ( berlebihan )
+KETENTUAN:
+Berikut adalah ringkasan singkat mengenai penggunaan perintah dasar Roleplay /me dan /do berdasarkan teks yang Anda berikan:
 
+Tujuan Perintah: Perintah /me dan /do adalah dasar untuk ber-Roleplay (RP) di SAMP, membantu pemain mendeskripsikan tindakan dan lingkungan karakter mereka secara In Character (IC).
+
+/me: Digunakan untuk menjelaskan tindakan fisik, perasaan, atau ekspresi karakter secara spesifik dan detail. Harus memberikan kesempatan respon jika melibatkan pemain lain.
+
+Contoh Benar: *Frank Rattlesnake mengambil uang dari saku dengan kedua tangan.
+
+Contoh Salah: *Frank Rattlesnake examine veh. (terlalu singkat/tidak deskriptif).
+
+/do: Digunakan untuk mendeskripsikan keadaan/penampilan karakter, lingkungan sekitar, atau hasil dari suatu aksi. Informasi dalam /do harus jujur (tidak boleh bohong IC/OOC Lie) dan dapat digunakan untuk bertanya tentang kondisi atau memberi kesempatan respon ke pemain lain.
+
+Contoh Benar: Terdapat memar di pipinya. ((Frank Rattlesnake)) atau Apakah ada perlawanan? ((Frank Rattlesnake))
+
+Contoh Salah: Terambil. ((Frank Rattlesnake)) atau SS'ed, report forum. ((Frank Rattlesnake)) (mengandung OOC atau force RP).
+
+Kesimpulan Utama: Penggunaan /me dan /do yang tepat dan spesifik sangat penting untuk menciptakan pengalaman Roleplay yang imersif dan kreatif, bukan sekadar menyelesaikan tugas atau 'menang'. Hindari penggunaan yang tidak detail, force RP, atau mencampuradukkan OOC.
 LARANGAN:
 - Force RP: "/me knocks John Doe unconscious" ❌
 - Undetailed RP: "/me looks surprised" ❌
