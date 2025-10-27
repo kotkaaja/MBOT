@@ -8,6 +8,7 @@ from PIL import Image, ImageDraw, ImageFont
 from openai import AsyncOpenAI
 from typing import List, Dict, Optional
 import asyncio
+import re
 
 logger = logging.getLogger(__name__)
 
@@ -71,7 +72,7 @@ class SSRPInfoModal(ui.Modal, title="Informasi Bersama untuk SSRP"):
         )
         embed.add_field(
             name="Instruksi",
-            value="• Maksimal 7 baris per gambar\n• Pilih posisi: Atas, Bawah, atau Split",
+            value="• Maksimal 7 baris per gambar\n• Pilih posisi: Atas, Bawah, atau Split\nPosisi ini menentukan di mana overlay chat akan ditempatkan.",
             inline=False
         )
         
@@ -136,7 +137,7 @@ class DialogCountSelect(ui.Select):
     def __init__(self, parent_view):
         options = [
             discord.SelectOption(label=f"{i} baris", value=str(i))
-            for i in range(1, 8)
+            for i in range(1, 8) # 1-7 baris
         ]
         super().__init__(
             placeholder="Pilih jumlah baris dialog (1-7)",
@@ -157,9 +158,7 @@ class PositionSelect(ui.Select):
         options = [
             discord.SelectOption(label="Atas", value="atas", emoji="⬆️"),
             discord.SelectOption(label="Bawah", value="bawah", emoji="⬇️"),
-            # --- PERBAIKAN DI SINI: Hapus emoji gabungan ---
-            discord.SelectOption(label="Split (Atas & Bawah)", value="split")
-            # ----------------------------------------------
+            discord.SelectOption(label="Split (Atas & Bawah)", value="split", emoji="↕️")
         ]
         super().__init__(
             placeholder="Pilih posisi dialog",
@@ -248,6 +247,30 @@ class SSRPChatlogCog(commands.Cog, name="SSRPChatlog"):
         else:
             self.client = AsyncOpenAI(api_key=self.bot.config.OPENAI_API_KEYS[0])
             logger.info("✅ OpenAI client untuk SSRP Chatlog berhasil diinisialisasi")
+            
+        # Pengaturan Font dan Warna
+        self.FONT_SIZE = 14
+        self.LINE_HEIGHT = 18
+        self.FONT_PATH = "arial.ttf" # Ganti jika perlu (misal: "tahoma.ttf")
+        self.COLOR_CHAT = (255, 255, 255) # Putih
+        self.COLOR_ME = (194, 162, 218) # Ungu/Pink #C2A2DA
+        self.COLOR_DO = (153, 204, 255) # Biru Muda #99CCFF
+        self.COLOR_OOC = (170, 170, 170) # Abu-abu #AAAAAA
+        self.COLOR_SHADOW = (0, 0, 0)
+        self.BG_COLOR = (0, 0, 0, 128) # Hitam semi-transparan (128 alpha)
+        
+        # Load font
+        try:
+            self.font = ImageFont.truetype(self.FONT_PATH, self.FONT_SIZE)
+        except IOError:
+            logger.warning(f"Font {self.FONT_PATH} tidak ditemukan, menggunakan font default.")
+            try:
+                # Coba font lain yang umum
+                self.FONT_PATH = "DejaVuSans.ttf" 
+                self.font = ImageFont.truetype(self.FONT_PATH, self.FONT_SIZE)
+            except IOError:
+                 self.font = ImageFont.load_default()
+
 
     @commands.command(name="buatssrp", aliases=["createssrp"])
     async def create_ssrp(self, ctx: commands.Context):
@@ -375,22 +398,25 @@ class SSRPChatlogCog(commands.Cog, name="SSRPChatlog"):
                     content=f"⏳ Memproses gambar {idx + 1}/{len(images)}..."
                 )
                 
+                # Pastikan dialog tidak melebihi jumlah yang diminta
+                limited_dialogs = dialogs[:dialog_counts[idx]]
+                
                 processed_img = await self.add_dialogs_to_image(
                     img_bytes,
-                    dialogs,
+                    limited_dialogs,
                     position
                 )
                 processed_images.append(processed_img)
                 
-                # Delay untuk menghindari rate limit
-                await asyncio.sleep(1)
+                # Delay kecil
+                await asyncio.sleep(0.5)
             
             # Kirim hasil
             await processing_msg.edit(
                 content=f"✅ Semua gambar berhasil diproses! Diminta oleh {interaction.user.mention}"
             )
             
-            # Send images in chunks (max 10 per message)
+            # Kirim gambar dalam chunk (max 10 per pesan)
             for i in range(0, len(processed_images), 10):
                 chunk = processed_images[i:i+10]
                 files = [
@@ -422,93 +448,147 @@ class SSRPChatlogCog(commands.Cog, name="SSRPChatlog"):
         info_data: Dict,
         dialog_counts: List[int]
     ) -> List[List[str]]:
-        """Generate dialog untuk semua gambar menggunakan Claude AI"""
+        """Generate dialog untuk semua gambar menggunakan AI"""
         
-        # Prepare image data untuk Claude
-        image_contents = []
-        for idx, img_bytes in enumerate(images):
-            base64_img = base64.b64encode(img_bytes).decode('utf-8')
-            image_contents.append({
-                "type": "image",
-                "source": {
-                    "type": "base64",
-                    "media_type": "image/png",
-                    "data": base64_img
-                }
-            })
+        # Prepare image data untuk AI (hanya gambar pertama untuk konteks)
+        # Mengirim semua gambar bisa sangat mahal dan lambat.
+        # Kita akan kirim gambar pertama sebagai konteks utama.
+        
+        base64_img = base64.b64encode(images[0]).decode('utf-8')
+        image_content = {
+            "type": "image_url",
+            "image_url": {
+                "url": f"data:image/png;base64,{base64_img}"
+            }
+        }
         
         # Build dialog requirements
         dialog_requirements = "\n".join([
-            f"Gambar {i+1}: {count} baris dialog"
+            f"Gambar {i+1}: HARUS berisi TEPAT {count} baris dialog."
             for i, count in enumerate(dialog_counts)
         ])
         
+        # Ambil nama karakter dari detail
+        char_names = re.findall(r"([A-Za-z_]+ [A-Za-z_]+)", info_data['detail_karakter'])
+        
         # Create prompt
-        prompt = f"""Anda adalah penulis dialog roleplay SAMP yang ahli. Berdasarkan informasi berikut:
+        prompt = f"""Anda adalah penulis dialog SSRP (Screenshot Roleplay) untuk server SAMP (San Andreas Multiplayer) yang sangat ahli.
+Tugas Anda adalah membuat dialog yang natural dan imersif berdasarkan skenario dan detail karakter, serta sesuai dengan jumlah baris yang diminta untuk setiap gambar.
 
 INFORMASI KARAKTER:
 {info_data['detail_karakter']}
+Nama karakter yang terlibat: {', '.join(char_names)}
 
 SKENARIO ROLEPLAY:
 {info_data['skenario']}
 
 JUMLAH GAMBAR: {len(images)}
+(Anda hanya melihat gambar pertama sebagai referensi visual. Fokus pada skenario untuk dialog selanjutnya.)
 
-KEBUTUHAN DIALOG:
+KEBUTUHAN DIALOG PER GAMBAR:
 {dialog_requirements}
 
-Buatlah dialog yang natural dan sesuai dengan gambar-gambar yang diberikan. Setiap dialog harus:
-1. Sesuai dengan konteks visual di gambar
-2. Mengikuti skenario yang diberikan
-3. Mencerminkan karakter yang dijelaskan
-4. Natural seperti percakapan asli dalam game roleplay SAMP
+ATURAN FORMAT SANGAT PENTING:
+1.  Gunakan format SAMP yang benar.
+2.  Untuk obrolan normal (IC), gunakan: `Nama_Karakter: Dialognya di sini.` (Gunakan underscore untuk spasi di nama)
+3.  Untuk aksi /me, gunakan: `* Nama_Karakter melakukan sesuatu.` (diawali bintang dan spasi)
+4.  Untuk aksi /do, gunakan: `** Sesuatu terjadi. (( Nama_Karakter ))` (diawali dua bintang, dan nama karakter di akhir dalam kurung OOC)
+5.  Untuk OOC chat, gunakan: `(( Dialog OOC ))`
 
-Format output HARUS seperti ini:
+FORMAT OUTPUT HARUS SEPERTI INI (PISAHKAN DENGAN ===GAMBAR_X===):
 ===GAMBAR_1===
-Nama_Karakter says: Dialog baris 1
-Nama_Karakter says: Dialog baris 2
+[baris 1]
+[baris 2]
+...
 ===GAMBAR_2===
-Nama_Karakter says: Dialog baris 1
-...dan seterusnya
+[baris 1]
+[baris 2]
+...
+(dan seterusnya)
 
-PENTING: 
-- Gunakan format "Nama_Karakter says: dialog" (dengan underscore di nama)
-- Gunakan nama karakter persis seperti yang disebutkan
-- Jangan tambahkan timestamp atau format lain"""
+Contoh output untuk 1 gambar:
+===GAMBAR_1===
+* John_Doe melihat ke arah Jane_Smith.
+John_Doe: Apa yang kamu lihat di sana?
+** Terlihat ada sebuah mobil hitam terparkir di ujung jalan. (( John_Doe ))
+Jane_Smith: Sepertinya mobil itu mencurigakan.
+* Jane_Smith menunjuk ke arah mobil tersebut.
+
+PENTING:
+- PASTIKAN jumlah baris dialog untuk setiap gambar TEPAT sesuai permintaan.
+- Gunakan nama karakter persis seperti yang ada di 'Informasi Karakter'. Ganti spasi dengan underscore (contoh: John Doe menjadi John_Doe).
+- Buat dialog mengalir natural dari gambar 1 ke gambar berikutnya, melanjutkan skenario.
+- Jangan tambahkan timestamp.
+"""
 
         # Call OpenAI API
-        response = await self.client.chat.completions.create(
-            model="gpt-4o-mini",
-            messages=[
-                {"role": "system", "content": "You are an expert SAMP roleplay dialogue writer."},
-                {"role": "user", "content": prompt}
-            ],
-            max_tokens=2000,
-            temperature=0.8
-        )
+        try:
+            response = await self.client.chat.completions.create(
+                model="gpt-4o", # Model yang lebih kuat untuk tugas kompleks
+                messages=[
+                    {"role": "system", "content": "Anda adalah penulis dialog SSRP SAMP yang ahli."},
+                    {"role": "user", "content": [
+                        {"type": "text", "text": prompt},
+                        image_content # Kirim gambar pertama
+                    ]}
+                ],
+                max_tokens=3000,
+                temperature=0.7
+            )
+            
+            response_text = response.choices[0].message.content
         
-        response_text = response.choices[0].message.content
+        except Exception as e:
+            logger.error(f"OpenAI API call failed: {e}. Mencoba gpt-4o-mini...")
+            # Fallback ke model mini jika 'o' gagal (misal karena gambar)
+            response = await self.client.chat.completions.create(
+                model="gpt-4o-mini",
+                messages=[
+                    {"role": "system", "content": "Anda adalah penulis dialog SSRP SAMP yang ahli."},
+                    {"role": "user", "content": prompt} # Kirim teks saja
+                ],
+                max_tokens=2000,
+                temperature=0.7
+            )
+            response_text = response.choices[0].message.content
+
         
         # Parse response
         dialogs_per_image = []
         current_dialogs = []
         
-        for line in response_text.split('\n'):
-            line = line.strip()
-            if line.startswith('===GAMBAR_'):
-                if current_dialogs:
-                    dialogs_per_image.append(current_dialogs)
+        if not response_text:
+            raise Exception("AI tidak mengembalikan respon teks.")
+
+        # Split berdasarkan ===GAMBAR_X===
+        parts = re.split(r'===GAMBAR_\d+===', response_text)
+        
+        for part in parts:
+            if not part.strip():
+                continue
+                
+            lines = [line.strip() for line in part.split('\n') if line.strip()]
+            dialogs_per_image.append(lines)
+        
+        # Jika parsing gagal, coba parsing manual
+        if not dialogs_per_image:
+             for line in response_text.split('\n'):
+                line = line.strip()
+                if line.startswith('===GAMBAR_'):
+                    if current_dialogs:
+                        dialogs_per_image.append(current_dialogs)
                     current_dialogs = []
-            elif line and not line.startswith('==='):
-                current_dialogs.append(line)
+                elif line:
+                    current_dialogs.append(line)
+             if current_dialogs:
+                dialogs_per_image.append(current_dialogs)
+
         
-        if current_dialogs:
-            dialogs_per_image.append(current_dialogs)
-        
-        # Ensure we have dialogs for all images
+        # Pastikan jumlahnya sesuai
         while len(dialogs_per_image) < len(images):
-            dialogs_per_image.append([])
+            dialogs_per_image.append(["[AI Gagal generate dialog untuk gambar ini]", f"Jumlah: {len(dialogs_per_image)}/{len(images)}"])
         
+        logger.info(f"AI generated {len(dialogs_per_image)} sets of dialogs.")
         return dialogs_per_image
 
     async def add_dialogs_to_image(
@@ -517,69 +597,110 @@ PENTING:
         dialogs: List[str],
         position: str
     ) -> bytes:
-        """Add dialog text to image"""
+        """Tambahkan dialog ke gambar DENGAN BENAR (overlay, drop shadow)"""
         
-        img = Image.open(io.BytesIO(image_bytes))
+        # Buka gambar dan konversi ke RGBA untuk transparansi
+        img = Image.open(io.BytesIO(image_bytes)).convert("RGBA")
         width, height = img.size
         
-        # Hitung tinggi yang dibutuhkan untuk dialog
-        line_height = 25
-        dialog_height = len(dialogs) * line_height + 20  # +20 untuk padding
+        # Buat overlay transparan untuk menggambar teks dan BG
+        txt_overlay = Image.new('RGBA', img.size, (255, 255, 255, 0))
+        draw = ImageDraw.Draw(txt_overlay)
         
-        # Create new image dengan space untuk dialog
+        padding = 10 # Padding dari tepi
+        
+        # Hitung tinggi yang dibutuhkan
+        dialog_height = (len(dialogs) * self.LINE_HEIGHT) + (padding * 2)
+        
+        # Tentukan posisi Y dan gambar background semi-transparan
         if position == "atas":
-            new_height = height + dialog_height
-            new_img = Image.new('RGB', (width, new_height), color='black')
-            new_img.paste(img, (0, dialog_height))
-            y_start = 10
+            bg_y_start = 0
+            bg_y_end = dialog_height
+            y_pos = padding
+            
         elif position == "bawah":
-            new_height = height + dialog_height
-            new_img = Image.new('RGB', (width, new_height), color='black')
-            new_img.paste(img, (0, 0))
-            y_start = height + 10
+            bg_y_start = height - dialog_height
+            bg_y_end = height
+            y_pos = bg_y_start + padding
+            
         else:  # split
-            half_dialogs = len(dialogs) // 2
-            top_height = half_dialogs * line_height + 20
-            bottom_height = (len(dialogs) - half_dialogs) * line_height + 20
-            new_height = height + top_height + bottom_height
-            new_img = Image.new('RGB', (width, new_height), color='black')
-            new_img.paste(img, (0, top_height))
+            half_dialogs = (len(dialogs) + 1) // 2
+            top_dialogs = dialogs[:half_dialogs]
+            bottom_dialogs = dialogs[half_dialogs:]
+            
+            # Hitung tinggi atas
+            top_height = (len(top_dialogs) * self.LINE_HEIGHT) + (padding * 2)
+            draw.rectangle([(0, 0), (width, top_height)], fill=self.BG_COLOR)
+            
+            # Hitung tinggi bawah
+            bottom_height = (len(bottom_dialogs) * self.LINE_HEIGHT) + (padding * 2)
+            bottom_y_start = height - bottom_height
+            draw.rectangle([(0, bottom_y_start), (width, height)], fill=self.BG_COLOR)
+            
+            # Draw dialogs (split)
+            y_pos_top = padding
+            for dialog in top_dialogs:
+                self.draw_text_with_shadow(draw, (padding, y_pos_top), dialog, self.font)
+                y_pos_top += self.LINE_HEIGHT
+            
+            y_pos_bottom = bottom_y_start + padding
+            for dialog in bottom_dialogs:
+                self.draw_text_with_shadow(draw, (padding, y_pos_bottom), dialog, self.font)
+                y_pos_bottom += self.LINE_HEIGHT
+            
+            # Gabungkan gambar dan return
+            out_img = Image.alpha_composite(img, txt_overlay)
+            output = io.BytesIO()
+            out_img.convert("RGB").save(output, format='JPEG', quality=90)
+            output.seek(0)
+            return output.getvalue()
+
+        # Gambar background untuk 'atas' atau 'bawah'
+        draw.rectangle([(0, bg_y_start), (width, bg_y_end)], fill=self.BG_COLOR)
         
-        draw = ImageDraw.Draw(new_img)
+        # Draw dialogs (atas atau bawah)
+        for dialog in dialogs:
+            self.draw_text_with_shadow(draw, (padding, y_pos), dialog, self.font)
+            y_pos += self.LINE_HEIGHT
         
-        # Load font
-        try:
-            font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 16)
-        except:
-            try:
-                font = ImageFont.truetype("arial.ttf", 16)
-            except:
-                font = ImageFont.load_default()
+        # Gabungkan gambar asli dengan overlay teks
+        out_img = Image.alpha_composite(img, txt_overlay)
         
-        # Draw dialogs
-        if position == "split":
-            half = len(dialogs) // 2
-            # Top dialogs
-            y_pos = 10
-            for dialog in dialogs[:half]:
-                draw.text((10, y_pos), dialog, fill='white', font=font, stroke_width=2, stroke_fill='black')
-                y_pos += line_height
-            # Bottom dialogs
-            y_pos = height + top_height + 10
-            for dialog in dialogs[half:]:
-                draw.text((10, y_pos), dialog, fill='white', font=font, stroke_width=2, stroke_fill='black')
-                y_pos += line_height
-        else:
-            y_pos = y_start
-            for dialog in dialogs:
-                draw.text((10, y_pos), dialog, fill='white', font=font, stroke_width=2, stroke_fill='black')
-                y_pos += line_height
-        
-        # Convert back to bytes
+        # Convert kembali ke bytes
         output = io.BytesIO()
-        new_img.save(output, format='PNG')
+        out_img.convert("RGB").save(output, format='JPEG', quality=90) # Simpan sebagai JPEG
         output.seek(0)
         return output.getvalue()
+        
+    def get_text_color(self, text: str) -> tuple:
+        """Tentukan warna teks berdasarkan format SSRP"""
+        text = text.strip()
+        if text.startswith('*'):
+            return self.COLOR_ME
+        if text.startswith('**'):
+            return self.COLOR_DO
+        if text.startswith('(('):
+            return self.COLOR_OOC
+        return self.COLOR_CHAT
+
+    def draw_text_with_shadow(self, draw, pos, text, font):
+        """Gambar teks dengan drop shadow 1px"""
+        x, y = pos
+        shadow_pos = (x + 1, y + 1)
+        text_color = self.get_text_color(text)
+        
+        # Ganti underscore di nama karakter menjadi spasi HANYA untuk tampilan
+        # Contoh: John_Doe: -> John Doe:
+        if ':' in text and not text.startswith('*'):
+            parts = text.split(':', 1)
+            name = parts[0].replace('_', ' ')
+            dialog = parts[1]
+            text = f"{name}:{dialog}"
+
+        # Gambar bayangan
+        draw.text(shadow_pos, text, font=font, fill=self.COLOR_SHADOW)
+        # Gambar teks utama
+        draw.text(pos, text, font=font, fill=text_color)
 
 
 async def setup(bot):
