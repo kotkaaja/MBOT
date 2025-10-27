@@ -60,38 +60,13 @@ WEAPON_LIST = {
 # ============================
 # UI COMPONENTS
 # ============================
-class PlatformSelectView(discord.ui.View):
-    """View untuk memilih platform (PC/Mobile)"""
-    def __init__(self, user_id: int):
-        super().__init__(timeout=120)
-        self.user_id = user_id
-        self.platform = None
-    
-    async def interaction_check(self, interaction: discord.Interaction) -> bool:
-        if interaction.user.id != self.user_id:
-            await interaction.response.send_message("❌ Tombol ini bukan untuk Anda!", ephemeral=True)
-            return False
-        return True
-
-    @discord.ui.button(label="💻 PC (KHP)", style=discord.ButtonStyle.primary, emoji="💻")
-    async def pc_button(self, interaction: discord.Interaction, button: discord.ui.Button):
-        self.platform = "pc"
-        await interaction.response.send_message("✅ **Platform dipilih:** PC (KotkaHelper v1.3.2)", ephemeral=True)
-        self.stop()
-
-    @discord.ui.button(label="📱 Mobile (KHMobile)", style=discord.ButtonStyle.success, emoji="📱")
-    async def mobile_button(self, interaction: discord.Interaction, button: discord.ui.Button):
-        self.platform = "mobile"
-        await interaction.response.send_message("✅ **Platform dipilih:** Mobile (KotkaHelper Mobile)", ephemeral=True)
-        self.stop()
-
+# PlatformSelectView (DIHAPUS SESUAI PERMINTAAN)
 
 class MacroTypeSelectView(discord.ui.View):
     """View untuk memilih tipe macro"""
-    def __init__(self, user_id: int, platform: str):
+    def __init__(self, user_id: int): # Disederhanakan: platform dihapus
         super().__init__(timeout=120)
         self.user_id = user_id
-        self.platform = platform
         self.macro_type = None
     
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
@@ -103,7 +78,7 @@ class MacroTypeSelectView(discord.ui.View):
     @discord.ui.button(label="⌨️ Auto RP Macro", style=discord.ButtonStyle.primary, emoji="⌨️")
     async def auto_rp_button(self, interaction: discord.Interaction, button: discord.ui.Button):
         self.macro_type = "auto_rp"
-        await interaction.response.send_message("✅ **Tipe dipilih:** Auto RP Macro (aktivasi dengan hotkey)", ephemeral=True)
+        await interaction.response.send_message("✅ **Tipe dipilih:** Auto RP Macro (aktivasi dengan hotkey/button)", ephemeral=True)
         self.stop()
 
     @discord.ui.button(label="💬 CMD Macro", style=discord.ButtonStyle.success, emoji="💬")
@@ -216,13 +191,21 @@ class WeaponSelectView(discord.ui.View):
             return False
         return True
 
+    # --- PERBAIKAN 1: Bug menu Gun RP tidak update ---
     async def weapon_callback(self, interaction: discord.Interaction):
         self.weapon_id = int(interaction.data['values'][0])
         weapon_name = WEAPON_LIST.get(self.weapon_id, "Unknown")
-        await interaction.response.send_message(f"✅ **Senjata dipilih:** {weapon_name} (ID: {self.weapon_id})", ephemeral=True)
+        
         # Hapus select dan tambahkan button aksi
         self.clear_items()
         self.add_action_buttons()
+        
+        # Edit pesan asli untuk menampilkan tombol aksi
+        await interaction.response.edit_message(
+            content=f"🔫 **Langkah 2/3:** Senjata dipilih: **{weapon_name}**. Sekarang pilih aksinya:",
+            view=self
+        )
+    # --- AKHIR PERBAIKAN 1 ---
 
     def add_action_buttons(self):
         draw_btn = discord.ui.Button(label="📤 Keluarkan Senjata", style=discord.ButtonStyle.success)
@@ -297,10 +280,9 @@ class ConfigInputModal(discord.ui.Modal):
         row=3 # Letakkan di baris ke-3
     )
 
-    def __init__(self, macro_type: str, platform: str, title: str):
+    def __init__(self, macro_type: str, title: str): # Disederhanakan: platform dihapus
         super().__init__(title=title)
         self.macro_type = macro_type
-        self.platform = platform
         
         self.theme_value = None
         self.details_value = None
@@ -308,25 +290,25 @@ class ConfigInputModal(discord.ui.Modal):
 
         # Tambahkan item konfigurasi secara dinamis di baris 0 & 1
         if macro_type == "auto_rp":
-            if platform == "pc":
-                # Butuh Hotkey (2 input)
-                self.config_modifier = discord.ui.TextInput(
-                    label="Modifier Key (ALT/SHIFT/CTRL atau -)",
-                    placeholder="Contoh: ALT (atau - jika tidak ada)",
-                    max_length=10,
-                    required=True,
-                    row=0
-                )
-                self.config_primary_key = discord.ui.TextInput(
-                    label="Primary Key (F1-F12, A-Z, 0-9, NUM0-9)",
-                    placeholder="Contoh: F5",
-                    max_length=5,
-                    required=True,
-                    row=1
-                )
-                self.add_item(self.config_modifier)
-                self.add_item(self.config_primary_key)
-            # else: Mobile Auto RP tidak butuh input config
+            # Butuh Hotkey (2 input) - Asumsi ini untuk PC
+            self.config_modifier = discord.ui.TextInput(
+                label="Modifier Key (ALT/SHIFT/CTRL atau -)",
+                placeholder="Contoh: ALT (atau - jika tidak ada)",
+                max_length=10,
+                required=True,
+                row=0
+            )
+            self.config_primary_key = discord.ui.TextInput(
+                label="Primary Key (F1-F12, A-Z, 0-9, NUM0-9)",
+                placeholder="Contoh: F5",
+                max_length=5,
+                required=True,
+                row=1
+            )
+            self.add_item(self.config_modifier)
+            self.add_item(self.config_primary_key)
+            # Jika user memilih Auto RP tapi formatnya mobile, dia harus mengabaikan ini
+            # PERBAIKAN: Logika baru mengasumsikan Auto RP = PC Hotkey, karena mobile tidak butuh config di sini
         
         elif macro_type == "cmd":
             # Butuh Command (1 input)
@@ -338,6 +320,12 @@ class ConfigInputModal(discord.ui.Modal):
                 row=0
             )
             self.add_item(self.config_command)
+        
+        # PERBAIKAN 2: Jika Auto RP untuk Mobile, modal ini tidak butuh input config
+        # Logika baru: Asumsikan Auto RP -> PC, CMD Macro -> PC/Mobile
+        # Jika Auto RP Mobile: Modal ini tidak akan dipanggil, atau seharusnya punya logic beda
+        # Disederhanakan: Kita asumsikan Auto RP = Hotkey PC, Auto RP Mobile = tidak ada config
+        # KARENA KITA HANYA MENGGUNAKAN 1 FORMAT (KHP), Auto RP SELALU MEMBUTUHKAN HOTKEY
 
     async def on_submit(self, interaction: discord.Interaction):
         # 1. Validasi Tema (selalu ada)
@@ -346,7 +334,7 @@ class ConfigInputModal(discord.ui.Modal):
         
         # 2. Validasi Konfigurasi (jika ada)
         try:
-            if self.macro_type == "auto_rp" and self.platform == "pc":
+            if self.macro_type == "auto_rp": # Selalu butuh hotkey
                 mod = self.config_modifier.value.strip().upper()
                 if mod == "-":
                     mod_val = "Tidak Ada"
@@ -378,8 +366,8 @@ class ConfigInputModal(discord.ui.Modal):
                 self.config_value = cmd
                 config_info = f"Command: `{cmd}`"
             
-            else: # Mobile Auto RP
-                config_info = "Tipe: `Mobile Auto RP`"
+            else: # Fallback?
+                config_info = "Tipe: Tidak Dikenali (Error)"
 
             await interaction.response.send_message(
                 f"✅ **Konfigurasi Diterima**\n"
@@ -524,22 +512,10 @@ class TemplateCreatorCog(commands.Cog, name="TemplateCreator"):
         output += "END_GUN_MACRO\n"
         return output
 
-    def _format_mobile_macro(self, title: str, steps: List[Dict], weapon_id: Optional[int] = None, 
-                            action: Optional[str] = None, command: Optional[str] = None) -> str:
-        """Format untuk KHMobile (JSON format)"""
-        macro_data = {
-            "name": title,
-            "steps": [{"command": s["command"], "delay": s.get("delay", 2) * 1000} for s in steps]
-        }
-        
-        if weapon_id is not None and action:
-            macro_data["weaponId"] = weapon_id
-            macro_data["action"] = action
-        
-        if command:
-            macro_data["command"] = command
-        
-        return json.dumps(macro_data, indent=2, ensure_ascii=False)
+    # --- PERBAIKAN 2: Fungsi format mobile dihapus ---
+    # def _format_mobile_macro(self, title: str, steps: List[Dict], weapon_id: Optional[int] = None, 
+    #                         action: Optional[str] = None, command: Optional[str] = None) -> str:
+    #     ... (DIHAPUS)
 
     @commands.command(name="createtemplate")
     async def create_template_command(self, ctx):
@@ -547,42 +523,18 @@ class TemplateCreatorCog(commands.Cog, name="TemplateCreator"):
         if ctx.author.id in self.active_sessions:
             return await ctx.send("❌ Anda sudah memiliki sesi aktif. Selesaikan dulu atau tunggu timeout.", delete_after=10)
         
-        # Langkah 1: Pilih Platform
-        embed = discord.Embed(
-            title="🎨 KotkaHelper Template Creator",
-            description="**Langkah 1/4:** Pilih platform target template Anda",
-            color=0x5865F2
-        )
-        embed.add_field(
-            name="💻 PC (KHP v1.3.2)",
-            value="• Simpan ke `KotkaHelper_Macros.txt`\n• Simpan ke `KotkaHelper_CmdMacros.txt`\n• Simpan ke `KotkaHelper_GunRP.txt`",
-            inline=True
-        )
-        embed.add_field(
-            name="📱 Mobile (KHMobile)",
-            value="• Import ke menu Auto RP\n• Import ke menu CMD Macro\n• Import ke menu Gun RP",
-            inline=True
-        )
-        
-        platform_view = PlatformSelectView(ctx.author.id)
-        platform_msg = await ctx.send(embed=embed, view=platform_view)
-        
-        await platform_view.wait()
-        if not platform_view.platform:
-            return await platform_msg.edit(content="⏱️ Timeout. Silakan jalankan perintah lagi.", embed=None, view=None)
-        
-        platform = platform_view.platform
-        self.active_sessions[ctx.author.id] = {"platform": platform}
-        
-        # Langkah 2: Pilih Tipe Macro
+        self.active_sessions[ctx.author.id] = {} # Inisialisasi sesi
+
+        # --- PERBAIKAN 2: Langkah 1 (Platform) dihapus ---
+        # Langkah 1 (Sebelumnya 2): Pilih Tipe Macro
         embed2 = discord.Embed(
             title="🎨 KotkaHelper Template Creator",
-            description=f"**Langkah 2/4:** Pilih tipe macro\n**Platform:** {platform.upper()}",
+            description=f"**Langkah 1/3:** Pilih tipe macro (Format KHP untuk PC/Mobile)",
             color=0x5865F2
         )
         embed2.add_field(
             name="⌨️ Auto RP Macro",
-            value="Aktivasi: Hotkey (PC) / Button (Mobile)",
+            value="Aktivasi: Hotkey (PC) / Button (Mobile - butuh setup manual hotkey)",
             inline=False
         )
         embed2.add_field(
@@ -596,28 +548,28 @@ class TemplateCreatorCog(commands.Cog, name="TemplateCreator"):
             inline=False
         )
         
-        type_view = MacroTypeSelectView(ctx.author.id, platform)
-        await platform_msg.edit(embed=embed2, view=type_view)
+        type_view = MacroTypeSelectView(ctx.author.id)
+        type_msg = await ctx.send(embed=embed2, view=type_view) # Mengirim pesan baru
         
         await type_view.wait()
         if not type_view.macro_type:
             del self.active_sessions[ctx.author.id]
-            return await platform_msg.edit(content="⏱️ Timeout. Silakan jalankan perintah lagi.", embed=None, view=None)
+            return await type_msg.edit(content="⏱️ Timeout. Silakan jalankan perintah lagi.", embed=None, view=None)
         
         macro_type = type_view.macro_type
         self.active_sessions[ctx.author.id]["macro_type"] = macro_type
         
-        # Langkah 3 & 4: Konfigurasi + Input Tema
+        # Langkah 2 & 3: Konfigurasi + Input Tema
         
         # Hapus pesan lama
-        await platform_msg.delete() 
+        await type_msg.delete() 
         modal_msg = None
         
         try:
             if macro_type == "gun":
                 # Gun RP: Pilih weapon dulu, baru modal
                 weapon_view = WeaponSelectView(ctx.author.id)
-                weapon_msg = await ctx.send("🔫 **Langkah 3/4:** Pilih senjata dan aksi:", view=weapon_view)
+                weapon_msg = await ctx.send("🔫 **Langkah 2/3:** Pilih senjata dan aksi:", view=weapon_view)
                 
                 await weapon_view.wait()
                 if not weapon_view.weapon_id or not weapon_view.action:
@@ -630,7 +582,6 @@ class TemplateCreatorCog(commands.Cog, name="TemplateCreator"):
                 
                 # Modal untuk tema Gun RP
                 modal = WeaponConfigModal()
-                modal_interaction = None
                 
                 # Kirim pesan dengan tombol untuk BUKA modal
                 class OpenModalView(discord.ui.View):
@@ -641,7 +592,7 @@ class TemplateCreatorCog(commands.Cog, name="TemplateCreator"):
                     async def interaction_check(self, interaction: discord.Interaction) -> bool:
                         return interaction.user.id == self.author_id
                     
-                    @discord.ui.button(label="📝 Isi Tema & Detail (Langkah 4/4)", style=discord.ButtonStyle.primary)
+                    @discord.ui.button(label="📝 Isi Tema & Detail (Langkah 3/3)", style=discord.ButtonStyle.primary)
                     async def open_modal_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
                         self.interaction = interaction # Simpan interaksi untuk modal
                         self.stop() # Hentikan view ini
@@ -667,7 +618,7 @@ class TemplateCreatorCog(commands.Cog, name="TemplateCreator"):
             else:
                 # Auto RP / CMD Macro: Modal gabungan
                 modal_title = "Konfigurasi Auto RP Macro" if macro_type == "auto_rp" else "Konfigurasi CMD Macro"
-                modal = ConfigInputModal(macro_type, platform, modal_title)
+                modal = ConfigInputModal(macro_type, modal_title)
                 
                 # Kirim pesan dengan tombol untuk BUKA modal
                 class OpenModalView(discord.ui.View):
@@ -678,7 +629,7 @@ class TemplateCreatorCog(commands.Cog, name="TemplateCreator"):
                     async def interaction_check(self, interaction: discord.Interaction) -> bool:
                         return interaction.user.id == self.author_id
 
-                    @discord.ui.button(label="📝 Isi Konfigurasi & Tema (Langkah 3&4/4)", style=discord.ButtonStyle.primary)
+                    @discord.ui.button(label="📝 Isi Konfigurasi & Tema (Langkah 2&3/3)", style=discord.ButtonStyle.primary)
                     async def open_modal_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
                         self.interaction = interaction
                         self.stop()
@@ -697,7 +648,7 @@ class TemplateCreatorCog(commands.Cog, name="TemplateCreator"):
                 if modal.theme_value:
                     self.active_sessions[ctx.author.id]["theme"] = modal.theme_value
                     self.active_sessions[ctx.author.id]["details"] = modal.details_value
-                    if macro_type == "auto_rp" and platform == "pc":
+                    if macro_type == "auto_rp": # Selalu KHP format
                         self.active_sessions[ctx.author.id]["modifier"] = modal.config_value["modifier"]
                         self.active_sessions[ctx.author.id]["primary_key"] = modal.config_value["primary_key"]
                     elif macro_type == "cmd":
@@ -738,95 +689,65 @@ class TemplateCreatorCog(commands.Cog, name="TemplateCreator"):
             del self.active_sessions[ctx.author.id]
             return await loading_msg.edit(content="❌ Semua layanan AI gagal. Silakan coba lagi nanti.")
         
-        # Format output sesuai platform dan tipe
+        # Format output (HANYA KHP FORMAT)
         session = self.active_sessions[ctx.author.id]
         title = f"RP {theme[:30]}"
         
-        if platform == "pc":
-            if macro_type == "auto_rp":
-                output = self._format_pc_auto_rp(
-                    title,
-                    session.get("modifier", "Tidak Ada"),
-                    session.get("primary_key", "F5"),
-                    steps
-                )
-                filename = "KotkaHelper_Macros.txt"
-            elif macro_type == "cmd":
-                output = self._format_pc_cmd_macro(
-                    title,
-                    session.get("command", "/rp"),
-                    steps
-                )
-                filename = "KotkaHelper_CmdMacros.txt"
-            else:  # gun
-                action = session.get("action", "draw")
-                if action == "both":
-                    # Buat 2 output: draw dan holster
-                    output_draw = self._format_pc_gun_rp(title + " (Keluarkan)", session["weapon_id"], "draw", steps)
-                    output_holster = self._format_pc_gun_rp(title + " (Simpan)", session["weapon_id"], "holster", steps)
-                    output = output_draw + "\n" + output_holster
-                else:
-                    output = self._format_pc_gun_rp(title, session["weapon_id"], action, steps)
-                filename = "KotkaHelper_GunRP.txt"
-        else:  # mobile
-            if macro_type == "gun":
-                action = session.get("action", "draw")
-                if action == "both":
-                    output_draw = self._format_mobile_macro(
-                        title + " (Keluarkan)",
-                        steps,
-                        weapon_id=session["weapon_id"],
-                        action="draw"
-                    )
-                    output_holster = self._format_mobile_macro(
-                        title + " (Simpan)",
-                        steps,
-                        weapon_id=session["weapon_id"],
-                        action="holster"
-                    )
-                    output = f"// KELUARKAN SENJATA\n{output_draw}\n\n// SIMPAN SENJATA\n{output_holster}"
-                else:
-                    output = self._format_mobile_macro(
-                        title,
-                        steps,
-                        weapon_id=session["weapon_id"],
-                        action=action
-                    )
-            elif macro_type == "cmd":
-                output = self._format_mobile_macro(title, steps, command=session.get("command", "/rp"))
-            else:  # auto_rp
-                output = self._format_mobile_macro(title, steps)
-            
-            filename = "KHMobile_import.json" if (macro_type != "gun" or action != "both") else "KHMobile_GunRP_Import.txt"
-            if platform == "mobile" and macro_type == "gun" and action == "both":
-                filename = "KHMobile_GunRP_Keduanya.txt" # Ubah ekstensi agar jelas ini bukan JSON tunggal
+        if macro_type == "auto_rp":
+            output = self._format_pc_auto_rp(
+                title,
+                session.get("modifier", "Tidak Ada"),
+                session.get("primary_key", "F5"),
+                steps
+            )
+            filename = "KotkaHelper_Macros.txt"
+        elif macro_type == "cmd":
+            output = self._format_pc_cmd_macro(
+                title,
+                session.get("command", "/rp"),
+                steps
+            )
+            filename = "KotkaHelper_CmdMacros.txt"
+        else:  # gun
+            action = session.get("action", "draw")
+            if action == "both":
+                # Buat 2 output: draw dan holster
+                output_draw = self._format_pc_gun_rp(title + " (Keluarkan)", session["weapon_id"], "draw", steps)
+                output_holster = self._format_pc_gun_rp(title + " (Simpan)", session["weapon_id"], "holster", steps)
+                output = output_draw + "\n" + output_holster
+            else:
+                output = self._format_pc_gun_rp(title, session["weapon_id"], action, steps)
+            filename = "KotkaHelper_GunRP.txt"
         
         # Kirim hasil
         embed_result = discord.Embed(
             title="✅ Template Berhasil Dibuat!",
-            description=f"**Platform:** {platform.upper()}\n**Tipe:** {macro_type.replace('_', ' ').title()}\n**Tema:** {theme}",
+            description=f"**Platform:** PC / Mobile (Format KHP)\n**Tipe:** {macro_type.replace('_', ' ').title()}\n**Tema:** {theme}",
             color=0x00FF00
         )
         
-        if platform == "pc":
-            embed_result.add_field(
-                name="📋 Cara Pakai",
-                value=f"1. Buka file `{filename}` di folder KotkaHelper\n2. Copy isi file di bawah\n3. Paste ke akhir file (sebelum END jika ada)\n4. Simpan dan restart script",
+        # --- PERBAIKAN 2: Pesan Bantuan Terunifikasi ---
+        if macro_type == "gun" and session.get("action") == "both":
+             embed_result.add_field(
+                name="📋 Cara Pakai (PC/Mobile)",
+                value=(
+                    f"1. Buka file `{filename}`.\n"
+                    "2. File ini berisi 2 template (Keluarkan & Simpan).\n"
+                    "3. Copy-paste *kedua* template ke file GunRP Anda (di PC/Mobile)."
+                ),
                 inline=False
             )
         else:
-            if macro_type == "gun" and action == "both":
-                 embed_result.add_field(
-                    name="📋 Cara Pakai (Mobile - Keduanya)",
-                    value=f"1. Copy JSON pertama (Keluarkan) dan import ke KHMobile.\n2. Copy JSON kedua (Simpan) dan import ke KHMobile.",
-                    inline=False
-                )
-            else:
-                embed_result.add_field(
-                    name="📋 Cara Pakai (Mobile)",
-                    value=f"1. Copy JSON di bawah\n2. Buka KHMobile → Menu sesuai tipe\n3. Paste atau manual input sesuai struktur JSON\n4. Simpan",
-                    inline=False
-                )
+            embed_result.add_field(
+                name="📋 Cara Pakai (PC/Mobile)",
+                value=(
+                    f"1. Buka file `{filename}` di folder `KotkaHelper` (PC) atau `KotkaHelperMobile` (Android).\n"
+                    "2. Copy isi file di bawah.\n"
+                    "3. Paste ke *akhir* file Anda.\n"
+                    "4. Simpan dan restart script."
+                ),
+                inline=False
+            )
         
         embed_result.set_footer(text=f"Generated by AI • {len(steps)} langkah")
         
@@ -850,7 +771,7 @@ class TemplateCreatorCog(commands.Cog, name="TemplateCreator"):
         # Cleanup session
         del self.active_sessions[ctx.author.id]
         
-        logger.info(f"Template created by {ctx.author.id}: {macro_type} for {platform}")
+        logger.info(f"Template created by {ctx.author.id}: {macro_type}")
 
     @commands.command(name="templatehelp")
     async def template_help_command(self, ctx):
@@ -865,10 +786,9 @@ class TemplateCreatorCog(commands.Cog, name="TemplateCreator"):
             name="🎯 Cara Menggunakan",
             value=(
                 "1. Ketik `!createtemplate`\n"
-                "2. Pilih platform (PC/Mobile)\n"
-                "3. Pilih tipe macro\n"
-                "4. Klik tombol untuk isi konfigurasi via form\n"
-                "5. AI generate template otomatis"
+                "2. Pilih tipe macro (Auto RP, CMD, Gun)\n"
+                "3. Klik tombol untuk isi konfigurasi via form\n"
+                "4. AI generate template otomatis"
             ),
             inline=False
         )
@@ -900,7 +820,7 @@ class TemplateCreatorCog(commands.Cog, name="TemplateCreator"):
         embed.add_field(
             name="⌨️ Tipe Macro",
             value=(
-                "**Auto RP:** Hotkey (PC: ALT+F5) / Button (Mobile)\n"
+                "**Auto RP:** Hotkey (PC: ALT+F5)\n"
                 "**CMD Macro:** Command chat (/mancing, /masak)\n"
                 "**Gun RP:** Otomatis saat ganti senjata"
             ),
@@ -910,8 +830,7 @@ class TemplateCreatorCog(commands.Cog, name="TemplateCreator"):
         embed.add_field(
             name="📂 Format Output",
             value=(
-                "**PC:** `.txt` (paste ke file KotkaHelper)\n"
-                "**Mobile:** `.json` (import di app KHMobile)"
+                "**`.txt` (KHP Format):** Format ini kompatibel untuk PC (KotkaHelper) dan Android (KotkaHelperMobile)."
             ),
             inline=False
         )
