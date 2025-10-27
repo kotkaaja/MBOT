@@ -14,36 +14,35 @@ import google.generativeai as genai
 logger = logging.getLogger(__name__)
 
 # ============================
-# KONSTANTA & PROMPT AI
+# KONSTANTA & PROMPT AI (DIPERBARUI DENGAN BAHASA)
 # ============================
 AI_TEMPLATE_PROMPT = """
-Expert SAMP RP script writer. Tema: "{theme}". Detail: {details}
+Expert SAMP RP script writer. Bahasa/Aksen: "{language}". Tema: "{theme}". Detail: {details}
 
-ATURAN WAJIB:
-1. /me = mendeskripsikan TINDAKAN karakter (present tense), detail tapi singkat. Contoh: /me mengambil pulpen dari meja dengan tangan kanan.
-2. /do = mendeskripsikan KEADAAN/HASIL/SITUASI di sekitar karakter atau kondisi karakter itu sendiri. TIDAK untuk bertanya 'bisa?'. Contoh: /do Terlihat pulpen di atas meja., /do Cuaca terlihat cerah.
-3. Buat 3-7 langkah RP yang logis dan berurutan.
-4. Sertakan delay antara 2-4 detik per langkah (bisa lebih jika aksi memang butuh waktu lama). Sesuaikan delay dengan logisnya aksi.
-5. Jangan gunakan: emoji, force RP (memaksa hasil pada pemain lain), undetailed RP (RP terlalu singkat/kurang jelas).
+ATURAN WAIB (Gunakan Bahasa/Aksen: "{language}"):
+1. /me = mendeskripsikan TINDAKAN karakter (present tense), detail tapi singkat. Contoh (Inggris): /me reaches for the pen. Contoh (Indo): /me meraih pulpen.
+2. /do = mendeskripsikan KEADAAN/HASIL/SITUASI. TIDAK untuk bertanya 'bisa?'. Contoh (Inggris): /do The pen is on the table. Contoh (Indo): /do Terlihat pulpen di meja.
+3. Buat 3-7 langkah RP yang logis dan berurutan sesuai tema, detail, dan bahasa/aksen yang diminta.
+4. Sertakan delay antara 2-4 detik per langkah (sesuaikan logisnya aksi).
+5. Jangan gunakan: emoji, force RP, undetailed RP.
 6. Maksimal 100 karakter per langkah/command.
-7. Gunakan Bahasa Indonesia yang natural dan baku.
 
 LARANGAN:
-- Force RP: "/me memukuli John Doe sampai mati" ❌ (Tidak boleh menentukan hasil akhir pada orang lain)
-- Undetailed RP: "/me kaget" ❌ (Harus lebih detail: "/me kaget melihat mobil melaju kencang")
-- Bohong di /do (OOC lie): "/do dompetnya kosong padahal ada uang" ❌
-- Menggunakan /do untuk bertanya izin seperti "bisa?" ❌
+- Force RP: "/me knocks John Doe unconscious" ❌
+- Undetailed RP: "/me looks surprised" ❌
+- Bohong di /do (OOC lie): "/do his wallet is empty (but it has money)" ❌
+- /do untuk bertanya: "/do Can he see the gun?" ❌
 
-Contoh BENAR:
-/me mengulurkan tangan kanan mencoba meraih gagang pintu
-/do Tangan kanan berhasil menggenggam gagang pintu.
-/me memutar gagang pintu dan mendorongnya perlahan
+Contoh BENAR (Bahasa Inggris):
+/me extends his right hand towards the door handle
+/do His right hand grips the handle firmly.
+/me turns the handle clockwise and pushes the door open slowly
 
 JSON only (WAJIB format ini, tanpa teks lain di luar JSON):
 {{
   "steps": [
-    {{"command": "/me ...", "delay": 2}},
-    {{"command": "/do ...", "delay": 3}}
+    {{"command": "/me ... (dalam bahasa '{language}')", "delay": 2}},
+    {{"command": "/do ... (dalam bahasa '{language}')", "delay": 3}}
     // ... langkah selanjutnya
   ]
 }}
@@ -151,7 +150,7 @@ class WeaponSelectView(discord.ui.View):
 
 
 # ============================
-# MODAL KONFIGURASI
+# MODAL KONFIGURASI (DIPERBARUI DENGAN BAHASA)
 # ============================
 
 class ConfigInputModal(discord.ui.Modal):
@@ -172,6 +171,16 @@ class ConfigInputModal(discord.ui.Modal):
         required=False,
         row=3
     )
+    # --- Input Bahasa Baru ---
+    language = discord.ui.TextInput(
+        label="Bahasa/Aksen RP (Opsional)",
+        placeholder="Contoh: English, Spanish (Mexico), Japanese",
+        default="Bahasa Indonesia baku",
+        max_length=50,
+        required=False,
+        row=4
+    )
+    # -----------------------
 
     def __init__(self, macro_type: str, title: str):
         super().__init__(title=title)
@@ -179,22 +188,18 @@ class ConfigInputModal(discord.ui.Modal):
 
         self.theme_value = None
         self.details_value = None
+        self.language_value = None # Simpan bahasa
         self.config_value = None
 
         if macro_type == "auto_rp":
             self.config_modifier = discord.ui.TextInput(
                 label="Modifier Key (ALT/SHIFT/CTRL atau -)",
                 placeholder="Contoh: ALT (atau - jika tidak ada)",
-                max_length=10,
-                required=True,
-                row=0
+                max_length=10, required=True, row=0
             )
             self.config_primary_key = discord.ui.TextInput(
                 label="Primary Key (F1-F12, A-Z, 0-9, NUM0-9)",
-                placeholder="Contoh: F5",
-                max_length=5,
-                required=True,
-                row=1
+                placeholder="Contoh: F5", max_length=5, required=True, row=1
             )
             self.add_item(self.config_modifier)
             self.add_item(self.config_primary_key)
@@ -202,123 +207,91 @@ class ConfigInputModal(discord.ui.Modal):
         elif macro_type == "cmd":
             self.config_command = discord.ui.TextInput(
                 label="Command Pemicu (harus dimulai /)",
-                placeholder="Contoh: /mancing",
-                max_length=50,
-                required=True,
-                row=0
+                placeholder="Contoh: /mancing", max_length=50, required=True, row=0
             )
             self.add_item(self.config_command)
 
     async def on_submit(self, interaction: discord.Interaction):
         self.theme_value = self.theme.value.strip()
         self.details_value = self.details.value.strip() or "Tidak ada detail tambahan"
+        self.language_value = self.language.value.strip() or "Bahasa Indonesia baku" # Ambil bahasa
 
         try:
             if self.macro_type == "auto_rp":
                 mod = self.config_modifier.value.strip().upper()
                 if mod == "-": mod_val = "Tidak Ada"
                 elif mod in ["ALT", "SHIFT", "CTRL"]: mod_val = mod
-                else: raise ValueError("Modifier tidak valid! Gunakan: ALT, SHIFT, CTRL, atau -")
+                else: raise ValueError("Modifier tidak valid!")
 
                 key = self.config_primary_key.value.strip().upper()
                 valid_keys = (
                     [f"F{i}" for i in range(1, 13)] + list("ABCDEFGHIJKLMNOPQRSTUVWXYZ") +
                     [str(i) for i in range(10)] + [f"NUM{i}" for i in range(10)]
                 )
-                if key not in valid_keys:
-                    raise ValueError("Key tidak valid! Gunakan: F1-F12, A-Z, 0-9, atau NUM0-NUM9")
+                if key not in valid_keys: raise ValueError("Key tidak valid!")
 
                 self.config_value = {"modifier": mod_val, "primary_key": key}
                 config_info = f"Hotkey: `{mod_val if mod_val != 'Tidak Ada' else ''}{'+' if mod_val != 'Tidak Ada' else ''}{key}`"
 
             elif self.macro_type == "cmd":
                 cmd = self.config_command.value.strip()
-                if not cmd.startswith("/"): raise ValueError("Command harus dimulai dengan `/`")
+                if not cmd.startswith("/"): raise ValueError("Command harus dimulai /")
                 if len(cmd) < 2: raise ValueError("Command terlalu pendek!")
-
                 self.config_value = cmd
                 config_info = f"Command: `{cmd}`"
-
             else:
-                config_info = "Tipe: Tidak Dikenali (Error)"
+                config_info = "Error Tipe"
 
             await interaction.response.send_message(
                 f"✅ **Konfigurasi Diterima**\n"
                 f"**Tema:** {self.theme_value}\n"
-                f"**Detail:** {self.details_value[:50]}...\n"
+                f"**Bahasa:** {self.language_value}\n" # Tampilkan bahasa
                 f"**Info:** {config_info}",
                 ephemeral=True
             )
         except ValueError as e:
-            self.theme_value = None
+            self.theme_value = None # Reset jika gagal
             await interaction.response.send_message(f"❌ **Validasi Gagal!**\n{e}", ephemeral=True)
         except Exception as e:
             logger.error(f"Error pada ConfigInputModal: {e}")
-            await interaction.response.send_message("❌ Terjadi error tak terduga.", ephemeral=True)
+            await interaction.response.send_message("❌ Error tak terduga.", ephemeral=True)
 
 
 class WeaponConfigModal(discord.ui.Modal, title="Konfigurasi Gun RP (Aksi Tunggal)"):
-    """Modal untuk Gun RP (hanya tema & detail) untuk aksi 'draw' ATAU 'holster'."""
-    theme = discord.ui.TextInput(
-        label="Tema/Aktivitas RP (Wajib)",
-        placeholder="Contoh: Mengeluarkan Deagle dari pinggang",
-        max_length=100,
-        required=True
-    )
-    details = discord.ui.TextInput(
-        label="Detail Tambahan (opsional)",
-        placeholder="Contoh: Sambil mengawasi sekitar",
-        style=discord.TextStyle.paragraph,
-        max_length=300,
-        required=False
-    )
+    """Modal untuk Gun RP 'draw' ATAU 'holster'."""
+    theme = discord.ui.TextInput(label="Tema/Aktivitas RP (Wajib)", placeholder="Contoh: Mengeluarkan Deagle", max_length=100, required=True, row=0)
+    details = discord.ui.TextInput(label="Detail Tambahan (opsional)", placeholder="Contoh: Sambil awas", style=discord.TextStyle.paragraph, max_length=300, required=False, row=1)
+    # --- Input Bahasa Baru ---
+    language = discord.ui.TextInput(label="Bahasa/Aksen RP (Opsional)", placeholder="Default: Bahasa Indonesia baku", default="Bahasa Indonesia baku", max_length=50, required=False, row=2)
+    # -----------------------
 
     def __init__(self):
         super().__init__()
         self.theme_value = None
         self.details_value = None
+        self.language_value = None # Simpan bahasa
 
     async def on_submit(self, interaction: discord.Interaction):
         self.theme_value = self.theme.value.strip()
         self.details_value = self.details.value.strip() or "Tidak ada detail tambahan"
+        self.language_value = self.language.value.strip() or "Bahasa Indonesia baku" # Ambil bahasa
         await interaction.response.send_message(
             f"✅ **Tema Gun RP Diterima**\n"
             f"**Tema:** {self.theme_value}\n"
-            f"**Detail:** {self.details_value[:50]}...",
+            f"**Bahasa:** {self.language_value}", # Tampilkan bahasa
             ephemeral=True
         )
 
 
 class WeaponConfigModalBoth(discord.ui.Modal, title="Konfigurasi Gun RP (Keduanya)"):
     """Modal khusus untuk Gun RP 'Keduanya'."""
-    theme_draw = discord.ui.TextInput(
-        label="Tema Mengeluarkan Senjata (Wajib)",
-        placeholder="Contoh: Mengambil Deagle dari holster pinggang",
-        max_length=100,
-        required=True,
-        row=0
-    )
-    details_draw = discord.ui.TextInput(
-        label="Detail Tambahan (Keluarkan)",
-        placeholder="Contoh: Dengan tangan kanan, sambil awas",
-        max_length=300,
-        required=False,
-        row=1
-    )
-    theme_holster = discord.ui.TextInput(
-        label="Tema Menyimpan Senjata (Wajib)",
-        placeholder="Contoh: Memasukkan kembali Deagle ke holster",
-        max_length=100,
-        required=True,
-        row=2
-    )
-    details_holster = discord.ui.TextInput(
-        label="Detail Tambahan (Simpan)",
-        placeholder="Contoh: Setelah memastikan situasi aman",
-        max_length=300,
-        required=False,
-        row=3
-    )
+    theme_draw = discord.ui.TextInput(label="Tema Keluarkan Senjata (Wajib)", placeholder="Contoh: Mengambil Deagle dari holster", max_length=100, required=True, row=0)
+    details_draw = discord.ui.TextInput(label="Detail Tambahan (Keluarkan)", placeholder="Contoh: Sambil awas", max_length=300, required=False, row=1)
+    theme_holster = discord.ui.TextInput(label="Tema Simpan Senjata (Wajib)", placeholder="Contoh: Memasukkan Deagle ke holster", max_length=100, required=True, row=2)
+    details_holster = discord.ui.TextInput(label="Detail Tambahan (Simpan)", placeholder="Contoh: Setelah aman", max_length=300, required=False, row=3)
+    # --- Input Bahasa Baru ---
+    language = discord.ui.TextInput(label="Bahasa/Aksen RP (Opsional)", placeholder="Default: Bahasa Indonesia baku", default="Bahasa Indonesia baku", max_length=50, required=False, row=4)
+    # -----------------------
 
     def __init__(self):
         super().__init__()
@@ -326,15 +299,18 @@ class WeaponConfigModalBoth(discord.ui.Modal, title="Konfigurasi Gun RP (Keduany
         self.details_draw_value = None
         self.theme_holster_value = None
         self.details_holster_value = None
+        self.language_value = None # Simpan bahasa
 
     async def on_submit(self, interaction: discord.Interaction):
         self.theme_draw_value = self.theme_draw.value.strip()
         self.details_draw_value = self.details_draw.value.strip() or "Tidak ada detail tambahan"
         self.theme_holster_value = self.theme_holster.value.strip()
         self.details_holster_value = self.details_holster.value.strip() or "Tidak ada detail tambahan"
+        self.language_value = self.language.value.strip() or "Bahasa Indonesia baku" # Ambil bahasa
 
         await interaction.response.send_message(
             f"✅ **Tema Gun RP Diterima**\n"
+            f"**Bahasa:** {self.language_value}\n" # Tampilkan bahasa
             f"**Tema Keluarkan:** {self.theme_draw_value}\n"
             f"**Tema Simpan:** {self.theme_holster_value}",
             ephemeral=True
@@ -349,10 +325,13 @@ class TemplateCreatorCog(commands.Cog, name="TemplateCreator"):
         self.config = bot.config
         self.active_sessions = {}
 
-    async def _get_ai_analysis(self, theme: str, details: str) -> Optional[List[Dict]]:
-        """Menggunakan AI untuk generate langkah-langkah RP"""
-        prompt = AI_TEMPLATE_PROMPT.format(theme=theme, details=details)
+    # --- DIPERBARUI: Terima parameter bahasa ---
+    async def _get_ai_analysis(self, theme: str, details: str, language: str) -> Optional[List[Dict]]:
+        """Menggunakan AI untuk generate langkah-langkah RP dalam bahasa yang diminta."""
+        prompt = AI_TEMPLATE_PROMPT.format(theme=theme, details=details, language=language) # Masukkan bahasa ke prompt
+        logger.info(f"Mengirim prompt ke AI (Bahasa: {language})") # Log bahasa yang digunakan
 
+        # (Logika pemilihan AI tetap sama)
         if self.config.GEMINI_API_KEYS:
             try:
                 genai.configure(api_key=self.config.GEMINI_API_KEYS[0])
@@ -360,6 +339,7 @@ class TemplateCreatorCog(commands.Cog, name="TemplateCreator"):
                 response = await model.generate_content_async(prompt)
                 cleaned = re.sub(r'```json\s*|\s*```', '', response.text.strip(), flags=re.DOTALL)
                 data = json.loads(cleaned)
+                logger.info("AI (Gemini) berhasil generate.")
                 return data.get("steps", [])
             except Exception as e:
                 logger.warning(f"Gemini gagal: {e}")
@@ -379,6 +359,7 @@ class TemplateCreatorCog(commands.Cog, name="TemplateCreator"):
                     )
                     response.raise_for_status()
                     data = json.loads(response.json()["choices"][0]["message"]["content"])
+                    logger.info("AI (DeepSeek) berhasil generate.")
                     return data.get("steps", [])
             except Exception as e:
                 logger.warning(f"DeepSeek gagal: {e}")
@@ -393,98 +374,65 @@ class TemplateCreatorCog(commands.Cog, name="TemplateCreator"):
                     temperature=0.7
                 )
                 data = json.loads(response.choices[0].message.content)
+                logger.info("AI (OpenAI) berhasil generate.")
                 return data.get("steps", [])
             except Exception as e:
                 logger.error(f"OpenAI gagal: {e}")
 
         return None
+    # ------------------------------------------
 
+    # (Fungsi _format_* tetap sama)
     def _format_pc_auto_rp(self, title: str, modifier: str, primary_key: str, steps: List[Dict]) -> str:
-        """Format untuk KHP Auto RP Macro"""
-        output = f"TITLE:{title}\n"
-        output += f"MODIFIER:{modifier}\n"
-        output += f"PRIMARY_KEY:{primary_key}\n"
-        for step in steps:
-            delay_seconds = step.get("delay", 2)
-            output += f"STEP:{delay_seconds}:{step['command']}\n"
-        output += "END_MACRO\n"
-        return output
+        output = f"TITLE:{title}\nMODIFIER:{modifier}\nPRIMARY_KEY:{primary_key}\n"
+        for step in steps: output += f"STEP:{step.get('delay', 2)}:{step['command']}\n"
+        output += "END_MACRO\n"; return output
 
     def _format_pc_cmd_macro(self, title: str, command: str, steps: List[Dict]) -> str:
-        """Format untuk KHP CMD Macro"""
-        output = f"TITLE:{title}\n"
-        output += f"CMD:{command}\n"
-        for step in steps:
-            delay_seconds = step.get("delay", 1)
-            output += f"STEP:{delay_seconds}:{step['command']}\n"
-        output += "END_MACRO\n"
-        return output
+        output = f"TITLE:{title}\nCMD:{command}\n"
+        for step in steps: output += f"STEP:{step.get('delay', 1)}:{step['command']}\n"
+        output += "END_MACRO\n"; return output
 
     def _format_pc_gun_rp(self, title: str, weapon_id: int, action: str, steps: List[Dict]) -> str:
-        """Format untuk KHP Gun RP Macro"""
-        output = f"WEAPON_ID:{weapon_id}\n"
-        output += f"ACTION:{action}\n"
-        output += f"TITLE:{title}\n"
-        for step in steps:
-            delay_seconds = step.get("delay", 1)
-            output += f"STEP:{delay_seconds}:{step['command']}\n"
-        output += "END_GUN_MACRO\n"
-        return output
+        output = f"WEAPON_ID:{weapon_id}\nACTION:{action}\nTITLE:{title}\n"
+        for step in steps: output += f"STEP:{step.get('delay', 1)}:{step['command']}\n"
+        output += "END_GUN_MACRO\n"; return output
 
-    @commands.command(name="createtemplate")
+    # --- PERUBAHAN NAMA PERINTAH ---
+    @commands.command(name="buatrp")
+    # -------------------------------
     async def create_template_command(self, ctx):
         """Membuat template Auto RP untuk KotkaHelper (PC/Mobile)"""
         if ctx.author.id in self.active_sessions:
-            return await ctx.send("❌ Anda sudah memiliki sesi aktif. Selesaikan dulu atau tunggu timeout.", delete_after=10)
+            return await ctx.send("❌ Sesi aktif. Selesaikan/tunggu timeout.", delete_after=10)
 
         self.active_sessions[ctx.author.id] = {}
 
         # Langkah 1: Pilih Tipe Macro
-        embed2 = discord.Embed(
+        embed_type = discord.Embed(
             title="🎨 KotkaHelper Template Creator",
-            description=f"**Langkah 1/3:** Pilih tipe macro (Format KHP untuk PC/Mobile)",
-            color=0x5865F2
+            description=f"**Langkah 1/3:** Pilih tipe macro (Format KHP)", color=0x5865F2
         )
-        embed2.add_field(name="⌨️ Auto RP Macro", value="Aktivasi: Hotkey (PC) / Button (Mobile)", inline=False)
-        embed2.add_field(name="💬 CMD Macro", value="Aktivasi: Command chat (misal /mancing)", inline=False)
-        embed2.add_field(name="🔫 Gun RP Macro", value="Aktivasi: Otomatis saat ganti senjata", inline=False)
+        embed_type.add_field(name="⌨️ Auto RP Macro", value="Aktivasi: Hotkey/Button", inline=False)
+        embed_type.add_field(name="💬 CMD Macro", value="Aktivasi: Command chat", inline=False)
+        embed_type.add_field(name="🔫 Gun RP Macro", value="Aktivasi: Otomatis ganti senjata", inline=False)
 
         type_view = MacroTypeSelectView(ctx.author.id)
-        type_msg = await ctx.send(embed=embed2, view=type_view)
+        type_msg = await ctx.send(embed=embed_type, view=type_view)
 
         await type_view.wait()
         if not type_view.macro_type:
             del self.active_sessions[ctx.author.id]
-            return await type_msg.edit(content="⏱️ Timeout. Silakan jalankan perintah lagi.", embed=None, view=None)
+            return await type_msg.edit(content="⏱️ Timeout.", embed=None, view=None)
 
         macro_type = type_view.macro_type
         self.active_sessions[ctx.author.id]["macro_type"] = macro_type
-
         await type_msg.delete()
-        modal_msg = None
+        modal_msg = None # Untuk pesan tombol buka modal
 
         try:
-            if macro_type == "gun":
-                weapon_view = WeaponSelectView(ctx.author.id)
-                weapon_msg = await ctx.send("🔫 **Langkah 2/3:** Pilih senjata:", view=weapon_view)
-
-                await weapon_view.wait()
-                if not weapon_view.weapon_id or not weapon_view.action:
-                    del self.active_sessions[ctx.author.id]
-                    return await weapon_msg.edit(content="⏱️ Timeout. Silakan jalankan perintah lagi.", view=None)
-
-                self.active_sessions[ctx.author.id]["weapon_id"] = weapon_view.weapon_id
-                self.active_sessions[ctx.author.id]["action"] = weapon_view.action
-                await weapon_msg.delete()
-
-                if weapon_view.action == "both":
-                    modal = WeaponConfigModalBoth()
-                    modal_button_label = "📝 Isi Tema Keluarkan & Simpan (Langkah 3/3)"
-                else:
-                    modal = WeaponConfigModal()
-                    modal_button_label = f"📝 Isi Tema '{weapon_view.action}' (Langkah 3/3)"
-
-                class OpenModalView(discord.ui.View):
+            # --- Alur Utama ---
+            class OpenModalView(discord.ui.View): # Kelas view pembuka modal generik
                     def __init__(self, author_id, button_label):
                         super().__init__(timeout=180)
                         self.author_id = author_id
@@ -504,139 +452,129 @@ class TemplateCreatorCog(commands.Cog, name="TemplateCreator"):
                         self.interaction = interaction
                         self.stop()
 
-                view = OpenModalView(ctx.author.id, modal_button_label)
-                modal_msg = await ctx.send(f"{ctx.author.mention}, klik tombol untuk mengisi detail Gun RP.", view=view)
-                await view.wait()
-
-                if not view.interaction:
+            if macro_type == "gun":
+                # Langkah 2 (Gun RP): Pilih Senjata
+                weapon_view = WeaponSelectView(ctx.author.id)
+                weapon_msg = await ctx.send("🔫 **Langkah 2/3:** Pilih senjata:", view=weapon_view)
+                await weapon_view.wait()
+                if not weapon_view.weapon_id or not weapon_view.action:
                     del self.active_sessions[ctx.author.id]
-                    return await modal_msg.edit(content="⏱️ Timeout. Anda tidak menekan tombol.", view=None)
+                    return await weapon_msg.edit(content="⏱️ Timeout.", view=None)
+                self.active_sessions[ctx.author.id].update({
+                    "weapon_id": weapon_view.weapon_id, "action": weapon_view.action
+                })
+                await weapon_msg.delete()
 
-                await view.interaction.response.send_modal(modal)
-                await modal.wait()
-
+                # Tentukan modal & label tombol
                 if weapon_view.action == "both":
-                    if modal.theme_draw_value:
-                        self.active_sessions[ctx.author.id]["theme_draw"] = modal.theme_draw_value
-                        self.active_sessions[ctx.author.id]["details_draw"] = modal.details_draw_value
-                        self.active_sessions[ctx.author.id]["theme_holster"] = modal.theme_holster_value
-                        self.active_sessions[ctx.author.id]["details_holster"] = modal.details_holster_value
-                    else:
-                        del self.active_sessions[ctx.author.id]; return
+                    modal = WeaponConfigModalBoth()
+                    modal_button_label = "📝 Isi Tema Keluarkan & Simpan (Langkah 3/3)"
                 else:
-                    if modal.theme_value:
-                        self.active_sessions[ctx.author.id]["theme"] = modal.theme_value
-                        self.active_sessions[ctx.author.id]["details"] = modal.details_value
-                    else:
-                        del self.active_sessions[ctx.author.id]; return
+                    modal = WeaponConfigModal()
+                    modal_button_label = f"📝 Isi Tema '{weapon_view.action}' (Langkah 3/3)"
 
-            else:
+            else: # Auto RP atau CMD Macro
                 modal_title = "Konfigurasi Auto RP Macro" if macro_type == "auto_rp" else "Konfigurasi CMD Macro"
                 modal = ConfigInputModal(macro_type, modal_title)
+                modal_button_label = "📝 Isi Konfigurasi & Tema (Langkah 2&3/3)"
 
-                class OpenModalView(discord.ui.View):
-                    def __init__(self, author_id):
-                        super().__init__(timeout=180)
-                        self.author_id = author_id
-                        self.interaction = None
-                    async def interaction_check(self, interaction: discord.Interaction) -> bool:
-                        return interaction.user.id == self.author_id
+            # Langkah Terakhir (Semua Tipe): Buka Modal
+            view = OpenModalView(ctx.author.id, modal_button_label)
+            modal_msg = await ctx.send(f"{ctx.author.mention}, klik tombol:", view=view)
+            await view.wait()
 
-                    @discord.ui.button(label="📝 Isi Konfigurasi & Tema (Langkah 2&3/3)", style=discord.ButtonStyle.primary)
-                    # --- PERBAIKAN ERROR TypeError ---
-                    async def open_modal_btn(self, interaction: discord.Interaction): # Hapus parameter 'button'
-                    # ---------------------------------
-                        self.interaction = interaction; self.stop()
+            if not view.interaction:
+                del self.active_sessions[ctx.author.id]
+                return await modal_msg.edit(content="⏱️ Timeout.", view=None)
 
-                view = OpenModalView(ctx.author.id)
-                modal_msg = await ctx.send(f"{ctx.author.mention}, klik tombol untuk mengisi konfigurasi.", view=view)
-                await view.wait()
+            await view.interaction.response.send_modal(modal)
+            await modal.wait() # Tunggu modal di-submit
 
-                if not view.interaction:
-                    del self.active_sessions[ctx.author.id]
-                    return await modal_msg.edit(content="⏱️ Timeout. Anda tidak menekan tombol.", view=None)
-
-                await view.interaction.response.send_modal(modal)
-                await modal.wait()
-
-                if modal.theme_value:
-                    self.active_sessions[ctx.author.id]["theme"] = modal.theme_value
-                    self.active_sessions[ctx.author.id]["details"] = modal.details_value
+            # Simpan hasil modal
+            if macro_type == "gun":
+                if modal.language_value: # Cek apakah modal berhasil disubmit
+                    self.active_sessions[ctx.author.id]["language"] = modal.language_value
+                    if self.active_sessions[ctx.author.id]["action"] == "both":
+                        self.active_sessions[ctx.author.id].update({
+                            "theme_draw": modal.theme_draw_value, "details_draw": modal.details_draw_value,
+                            "theme_holster": modal.theme_holster_value, "details_holster": modal.details_holster_value
+                        })
+                    else:
+                        self.active_sessions[ctx.author.id].update({
+                            "theme": modal.theme_value, "details": modal.details_value
+                        })
+                else:
+                     del self.active_sessions[ctx.author.id]; return # Modal dibatalkan
+            else: # Auto RP / CMD
+                if modal.theme_value: # Cek apakah modal berhasil disubmit
+                    self.active_sessions[ctx.author.id].update({
+                        "theme": modal.theme_value, "details": modal.details_value,
+                        "language": modal.language_value
+                    })
                     if macro_type == "auto_rp":
-                        self.active_sessions[ctx.author.id]["modifier"] = modal.config_value["modifier"]
-                        self.active_sessions[ctx.author.id]["primary_key"] = modal.config_value["primary_key"]
+                         self.active_sessions[ctx.author.id].update({
+                            "modifier": modal.config_value["modifier"], "primary_key": modal.config_value["primary_key"]
+                         })
                     elif macro_type == "cmd":
                         self.active_sessions[ctx.author.id]["command"] = modal.config_value
                 else:
-                    del self.active_sessions[ctx.author.id]; return
+                    del self.active_sessions[ctx.author.id]; return # Modal dibatalkan
 
         except Exception as e:
-            logger.error(f"Error saat alur konfigurasi: {e}", exc_info=True)
+            logger.error(f"Error alur konfigurasi: {e}", exc_info=True)
             if ctx.author.id in self.active_sessions: del self.active_sessions[ctx.author.id]
-            if modal_msg: await modal_msg.edit(content=f"❌ Terjadi kesalahan: {e}", view=None)
-            else: await ctx.send(f"❌ Terjadi kesalahan: {e}")
+            if modal_msg: await modal_msg.edit(content=f"❌ Error: {e}", view=None)
+            else: await ctx.send(f"❌ Error: {e}")
             return
 
         if modal_msg: await modal_msg.delete()
 
+        # --- Generate AI ---
         session = self.active_sessions.get(ctx.author.id)
-        if not session:
-            return await ctx.send("❌ Sesi dibatalkan karena data tidak lengkap.")
+        if not session: return await ctx.send("❌ Sesi Error.")
 
-        loading_msg = await ctx.send("🤖 **Generating template dengan AI...** (tunggu 10-20 detik)")
+        loading_msg = await ctx.send("🤖 **Generating AI...**")
+        steps_draw, steps_holster, steps_single = None, None, None
+        language = session.get("language", "Bahasa Indonesia baku") # Ambil bahasa dari sesi
 
-        steps_draw = None
-        steps_holster = None
-        steps_single = None
+        try:
+            if session.get("macro_type") == "gun" and session.get("action") == "both":
+                theme_d = session.get("theme_draw", "mengeluarkan")
+                details_d = session.get("details_draw", "")
+                theme_h = session.get("theme_holster", "menyimpan")
+                details_h = session.get("details_holster", "")
+                await loading_msg.edit(content=f"🤖 Generating 'Keluarkan' ({language})...")
+                steps_draw = await self._get_ai_analysis(theme_d, details_d, language)
+                await loading_msg.edit(content=f"🤖 Generating 'Simpan' ({language})...")
+                steps_holster = await self._get_ai_analysis(theme_h, details_h, language)
+                if not steps_draw or not steps_holster: raise Exception("AI Gagal (Both)")
+            else:
+                theme = session.get("theme", "rp")
+                details = session.get("details", "")
+                await loading_msg.edit(content=f"🤖 Generating RP ({language})...")
+                steps_single = await self._get_ai_analysis(theme, details, language)
+                if not steps_single: raise Exception("AI Gagal (Single)")
+        except Exception as ai_error:
+             del self.active_sessions[ctx.author.id]
+             return await loading_msg.edit(content=f"❌ Gagal generate AI: {ai_error}")
 
-        if session.get("macro_type") == "gun" and session.get("action") == "both":
-            theme_d = session.get("theme_draw", "mengeluarkan senjata")
-            details_d = session.get("details_draw", "")
-            theme_h = session.get("theme_holster", "menyimpan senjata")
-            details_h = session.get("details_holster", "")
-
-            await loading_msg.edit(content=f"🤖 **Generating RP 'Keluarkan':** {theme_d}...")
-            steps_draw = await self._get_ai_analysis(theme_d, details_d)
-
-            await loading_msg.edit(content=f"🤖 **Generating RP 'Simpan':** {theme_h}...")
-            steps_holster = await self._get_ai_analysis(theme_h, details_h)
-
-            if not steps_draw or not steps_holster:
-                del self.active_sessions[ctx.author.id]
-                return await loading_msg.edit(content="❌ Salah satu panggilan AI gagal. Silakan coba lagi nanti.")
-
-        else:
-            theme = session.get("theme", "melakukan rp")
-            details = session.get("details", "")
-            await loading_msg.edit(content=f"🤖 **Generating RP:** {theme}...")
-            steps_single = await self._get_ai_analysis(theme, details)
-
-            if not steps_single:
-                del self.active_sessions[ctx.author.id]
-                return await loading_msg.edit(content="❌ Semua layanan AI gagal. Silakan coba lagi nanti.")
-
-        session = self.active_sessions[ctx.author.id] # Refresh data sesi
+        # --- Format & Kirim Hasil ---
+        session = self.active_sessions[ctx.author.id] # Refresh
+        theme_display = "N/A" # Fallback
 
         if macro_type == "auto_rp":
             title = f"RP {session['theme'][:30]}"
-            output = self._format_pc_auto_rp(
-                title,
-                session.get("modifier", "Tidak Ada"),
-                session.get("primary_key", "F5"),
-                steps_single
-            )
+            output = self._format_pc_auto_rp(title, session["modifier"], session["primary_key"], steps_single)
             filename = "KotkaHelper_Macros.txt"
             theme_display = session['theme']
+            footer_text = f"AI ({language}) • {len(steps_single)} langkah"
         elif macro_type == "cmd":
             title = f"RP {session['theme'][:30]}"
-            output = self._format_pc_cmd_macro(
-                title,
-                session.get("command", "/rp"),
-                steps_single
-            )
+            output = self._format_pc_cmd_macro(title, session["command"], steps_single)
             filename = "KotkaHelper_CmdMacros.txt"
             theme_display = session['theme']
-        else:  # gun
+            footer_text = f"AI ({language}) • {len(steps_single)} langkah"
+        else: # gun
             action = session.get("action", "draw")
             if action == "both":
                 title_draw = f"RP {session['theme_draw'][:25]} (K)"
@@ -645,41 +583,30 @@ class TemplateCreatorCog(commands.Cog, name="TemplateCreator"):
                 output_holster = self._format_pc_gun_rp(title_holster, session["weapon_id"], "holster", steps_holster)
                 output = output_draw + "\n" + output_holster
                 theme_display = f"Keluarkan: {session['theme_draw']}\nSimpan: {session['theme_holster']}"
+                footer_text = f"AI ({language}) • {len(steps_draw)} + {len(steps_holster)} langkah"
             else:
                 title = f"RP {session['theme'][:30]}"
                 output = self._format_pc_gun_rp(title, session["weapon_id"], action, steps_single)
+                filename = "KotkaHelper_GunRP.txt"
                 theme_display = session['theme']
-            filename = "KotkaHelper_GunRP.txt"
+                footer_text = f"AI ({language}) • {len(steps_single)} langkah"
+            filename = "KotkaHelper_GunRP.txt" # filename selalu sama untuk Gun RP
 
         embed_result = discord.Embed(
             title="✅ Template Berhasil Dibuat!",
-            description=f"**Platform:** PC / Mobile (Format KHP)\n**Tipe:** {macro_type.replace('_', ' ').title()}\n**Tema:** {theme_display}",
+            description=f"**Tipe:** {macro_type.replace('_', ' ').title()}\n**Tema:** {theme_display}\n**Bahasa:** {language}",
             color=0x00FF00
         )
-
-        if macro_type == "gun" and session.get("action") == "both":
-             embed_result.add_field(
-                name="📋 Cara Pakai (PC/Mobile)",
-                value=(
-                    f"1. Buka file `{filename}`.\n"
-                    "2. File ini berisi 2 template (Keluarkan & Simpan).\n"
-                    "3. Copy-paste *kedua* template ke file GunRP Anda (di PC/Mobile)."
-                ),
-                inline=False
-            )
-             embed_result.set_footer(text=f"Generated by AI • {len(steps_draw)} + {len(steps_holster)} langkah")
-        else:
-            embed_result.add_field(
-                name="📋 Cara Pakai (PC/Mobile)",
-                value=(
-                    f"1. Buka file `{filename}` di folder `KotkaHelper` (PC) atau `KotkaHelperMobile` (Android).\n"
-                    "2. Copy isi file di bawah.\n"
-                    "3. Paste ke *akhir* file Anda.\n"
-                    "4. Simpan dan restart script."
-                ),
-                inline=False
-            )
-            embed_result.set_footer(text=f"Generated by AI • {len(steps_single)} langkah")
+        embed_result.add_field(
+            name="📋 Cara Pakai (PC/Mobile - KHP Format)",
+            value=(
+                f"1. Buka file `{filename}`.\n"
+                + ("2. File ini berisi 2 template (Keluarkan & Simpan).\n3. Copy-paste *kedua* template." if macro_type=="gun" and action=="both"
+                   else f"2. Copy isi file di bawah.\n3. Paste ke *akhir* file `{filename}` Anda.") + "\n4. Simpan & restart script."
+            ),
+            inline=False
+        )
+        embed_result.set_footer(text=footer_text)
 
         try:
             import io
@@ -687,70 +614,49 @@ class TemplateCreatorCog(commands.Cog, name="TemplateCreator"):
             file_buffer = io.BytesIO(file_content)
             file_buffer.seek(0)
             file = discord.File(fp=file_buffer, filename=filename)
-
             await loading_msg.delete()
             await ctx.send(embed=embed_result, file=file)
         except Exception as file_error:
-            logger.error(f"Error saat membuat file: {file_error}", exc_info=True)
-            await loading_msg.edit(content=f"⚠️ Gagal membuat file, berikut isi template:\n```\n{output[:1900]}\n```")
-            if len(output) > 1900:
-                await ctx.send(f"```\n{output[1900:][:1900]}\n```")
+            logger.error(f"Error buat file: {file_error}", exc_info=True)
+            await loading_msg.edit(content=f"⚠️ Gagal buat file:\n```\n{output[:1900]}\n```")
+            if len(output) > 1900: await ctx.send(f"```\n{output[1900:][:1900]}\n```")
 
-        del self.active_sessions[ctx.author.id]
-        logger.info(f"Template created by {ctx.author.id}: {macro_type}")
+        del self.active_sessions[ctx.author.id] # Hapus sesi setelah selesai
+        logger.info(f"Template '{macro_type}' by {ctx.author.id} ({language})")
 
+    # --- PERUBAHAN NAMA PERINTAH BANTUAN ---
     @commands.command(name="templatehelp")
+    # --------------------------------------
     async def template_help_command(self, ctx):
         """Bantuan untuk fitur Template Creator"""
         embed = discord.Embed(
             title="📚 KotkaHelper Template Creator - Bantuan",
-            description="Fitur untuk membuat template Auto RP yang kompatibel dengan KotkaHelper PC dan Mobile menggunakan AI.",
+            description="Fitur membuat template Auto RP (PC/Mobile) via AI.",
             color=0x3498db
         )
         embed.add_field(
-            name="🎯 Cara Menggunakan",
-            value=(
-                "1. Ketik `!createtemplate`\n"
-                "2. Pilih tipe macro (Auto RP, CMD, Gun)\n"
-                "3. Klik tombol untuk isi konfigurasi via form\n"
-                "4. AI generate template otomatis"
-            ),
-            inline=False
+            name="🎯 Cara Pakai",
+            value=("1. Ketik `!buatrp`\n2. Pilih tipe macro\n3. Ikuti alur & isi form (termasuk Bahasa/Aksen)\n4. AI generate template"), inline=False
         )
         embed.add_field(
-            name="📝 Aturan RP yang Diterapkan AI",
-            value=(
-                "✅ **/me** = Tindakan detail (present tense)\n"
-                "✅ **/do** = Hasil/situasi (Bukan untuk tanya 'bisa?')\n"
-                "✅ 3-7 langkah logis, delay 2-4s (disesuaikan AI)\n\n"
-                "❌ **Larangan:** Force RP, Undetailed RP, bohong di /do"
-            ),
-            inline=False
+            name="🌐 Bahasa & Aksen",
+            value=("Anda bisa input bahasa & aksen di form (opsional). Contoh: `English`, `Spanish (Mexico)`, `Russian accent`."), inline=False
         )
         embed.add_field(
-            name="💡 Tips Tema yang Bagus",
-            value=(
-                "✅ **Spesifik:** *'Mancing di dermaga malam hari'*\n"
-                "✅ **Dengan konteks:** *'Masuk mobil sport cuaca hujan'*\n"
-                "✅ **(Gun RP Both):** Tema 'Keluarkan' dan 'Simpan' harus diisi keduanya."
-            ),
-            inline=False
+            name="📝 Aturan AI",
+            value=("✅ /me=Aksi, /do=Hasil\n✅ 3-7 langkah, delay 2-4s\n❌ No Force RP, Undetailed, /do bohong"), inline=False
+        )
+        embed.add_field(
+            name="💡 Tips Tema",
+            value=("✅ Spesifik: 'Mancing malam hari'\n✅ Konteks: 'Masuk mobil hujan'\n✅ (Gun Both): Isi tema Keluarkan & Simpan"), inline=False
         )
         embed.add_field(
             name="⌨️ Tipe Macro",
-            value=(
-                "**Auto RP:** Hotkey (PC: ALT+F5)\n"
-                "**CMD Macro:** Command chat (/mancing, /masak)\n"
-                "**Gun RP:** Otomatis saat ganti senjata"
-            ),
-            inline=False
+            value=("**Auto RP:** Hotkey\n**CMD Macro:** Command chat\n**Gun RP:** Otomatis ganti senjata"), inline=False
         )
         embed.add_field(
             name="📂 Format Output",
-            value=(
-                "**`.txt` (KHP Format):** Format ini kompatibel untuk PC (KotkaHelper) dan Android (KotkaHelperMobile)."
-            ),
-            inline=False
+            value=("**`.txt` (KHP Format):** Kompatibel PC & Android."), inline=False
         )
         embed.set_footer(text="Dibuat oleh Kotkaaja • AI mengikuti aturan SAMP RP")
         await ctx.send(embed=embed)
@@ -758,23 +664,20 @@ class TemplateCreatorCog(commands.Cog, name="TemplateCreator"):
     @commands.Cog.listener()
     async def on_command_error(self, ctx, error):
         """Error handler untuk Template Creator"""
-        if ctx.command and ctx.command.name not in ['createtemplate', 'templatehelp']:
-            return
+        if ctx.command and ctx.command.name not in ['buatrp', 'templatehelp']: return # Sesuaikan nama
         if isinstance(error, commands.CommandNotFound): return
-        if ctx.author.id in self.active_sessions:
-            del self.active_sessions[ctx.author.id]
+        if ctx.author.id in self.active_sessions: del self.active_sessions[ctx.author.id]
 
         if isinstance(error, commands.CommandInvokeError):
-            # Cek apakah error original adalah discord.NotFound (interaksi sudah tidak valid)
             if isinstance(error.original, discord.NotFound):
-                logger.warning(f"Error NotFound di Template Creator (interaksi mungkin timeout): {error.original}")
-                await ctx.send("❌ Interaksi sudah tidak valid (mungkin timeout). Silakan coba jalankan perintah lagi.")
+                logger.warning(f"Error NotFound (interaksi timeout?): {error.original}")
+                await ctx.send("❌ Interaksi timeout/tidak valid. Coba lagi `!buatrp`.")
             else:
-                logger.error(f"Error di Template Creator: {error.original}", exc_info=True)
-                await ctx.send(f"❌ Terjadi kesalahan saat membuat template: `{str(error.original)[:200]}`\nSilakan coba lagi atau hubungi admin.")
+                logger.error(f"Error di {ctx.command.name}: {error.original}", exc_info=True)
+                await ctx.send(f"❌ Error: `{str(error.original)[:200]}`")
         else:
-            logger.error(f"Unexpected error di Template Creator: {error}", exc_info=True)
-            await ctx.send("❌ Terjadi kesalahan tidak terduga. Silakan coba lagi.")
+            logger.error(f"Error tak terduga: {error}", exc_info=True)
+            await ctx.send("❌ Error tak terduga.")
 
 
     def cog_unload(self):
