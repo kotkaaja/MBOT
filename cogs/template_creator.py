@@ -16,48 +16,47 @@ logger = logging.getLogger(__name__)
 # ============================
 # KONSTANTA & PROMPT AI (DIPERBARUI DENGAN BAHASA)
 # ============================
+
+# --- [PROMPT LAMA DIHAPUS DAN DIGANTI DENGAN YANG BARU INI] ---
 AI_TEMPLATE_PROMPT = """
-Expert SAMP RP script writer. Bahasa/Aksen: "{language}". Tema: "{theme}". Detail: {details}
+PERAN: Anda adalah penulis skrip Roleplay (RP) ahli untuk server GTA SAMP (San Andreas Multiplayer).
 
-ATURAN WAIB (Gunakan Bahasa/Aksen: "{language}"):
-1. /me = mendeskripsikan TINDAKAN karakter (present tense), detail tapi singkat. Contoh (Inggris): /me reaches for the pen. Contoh (Indo): /me meraih pulpen.
-2. /do = mendeskripsikan KEADAAN/HASIL/SITUASI. TIDAK untuk bertanya 'bisa?'. Contoh (Inggris): /do The pen is on the table. Contoh (Indo): /do Terlihat pulpen di meja.
-3. Buat 3-7 langkah RP yang logis dan berurutan sesuai tema, detail, dan bahasa/aksen yang diminta.
-4. Sertakan delay antara 2-4 detik per langkah (sesuaikan logisnya aksi).
-5. Jangan gunakan: emoji, force RP, undetailed RP.
-6. Maksimal 100 karakter per langkah/command.
-7. BUAT RP YANG SESUAI DENGAN KETENTUAN GTA SAMP. DAN SESUAIKAN DENGAN ROLEPLAY YANG BISANYA DI GTA SA-MP
-8. Buat sesuai kondisi roleplay di GTA SAMP dan tidak ada hal hal yang di lebihkan ( berlebihan )
-KETENTUAN:
-Berikut adalah ringkasan singkat mengenai penggunaan perintah dasar Roleplay /me dan /do berdasarkan teks yang Anda berikan:
+BAHASA UTAMA: Anda HARUS menulis semua output HANYA dalam bahasa/aksen berikut: "{language}".
+Jika "{language}" BUKAN "Bahasa Indonesia baku", JANGAN gunakan Bahasa Indonesia sama sekali.
 
-Tujuan Perintah: Perintah /me dan /do adalah dasar untuk ber-Roleplay (RP) di SAMP, membantu pemain mendeskripsikan tindakan dan lingkungan karakter mereka secara In Character (IC).
+TEMA: "{theme}"
+DETAIL: {details}
 
-/me: Digunakan untuk menjelaskan tindakan fisik, perasaan, atau ekspresi karakter secara spesifik dan detail. Harus memberikan kesempatan respon jika melibatkan pemain lain.
+KONTEKS SPESIFIK GTA SAMP (SANGAT PENTING):
+- Ini adalah game, aksi harus masuk akal di dalam game.
+- RP harus mendetail dan logis.
+- RP interaktif sangat diutamakan. Beri kesempatan pemain lain merespon, terutama saat menggunakan /do untuk bertanya (e.g., /do ada perlawanan?, /do terlihat senjata di dashboard?).
+- RP Senjata (Gun RP) sangat penting dan harus detail (e.g., /me mengambil Deagle dari holster, /me melepas kunci pengaman, /do siap menembak.)
+- Singkatan Umum: 'Deagle' (Desert Eagle), 'SG' (Shotgun), 'SOS' (Sawn-Off Shotgun), 'AK' (AK-47), 'M4', 'HP' (Handphone).
+- Lokasi Umum: Holster (sarung pistol), dashboard (mobil), glove box (mobil), saku.
 
-Contoh Benar: *Frank Rattlesnake mengambil uang dari saku dengan kedua tangan.
+ATURAN WAJIB (Gunakan Bahasa: "{language}"):
+1.  /me = Mendeskripsikan TINDAKAN fisik, ekspresi, atau apa yang dilakukan karakter (present tense). Detail tapi singkat (maks 100 karakter).
+    Contoh (Indo): /me meraih HP dari saku celananya.
+    Contoh (Inggris): /me reaches into his pocket for his phone.
 
-Contoh Salah: *Frank Rattlesnake examine veh. (terlalu singkat/tidak deskriptif).
+2.  /do = Mendeskripsikan KEADAAN/HASIL/SITUASI ATAU BERTANYA. Ini adalah fakta lingkungan atau hasil dari /me.
+    Contoh (Indo): /do Terlihat HP di tangannya.
+    Contoh (Inggris): /do A phone is visible in his hand.
+    Contoh BERTANYA (Indo): /do Ada perlawanan dari target? ((Nama_Karakter))
+    Contoh BERTANYA (Inggris): /do Is there any resistance from the target? ((Character_Name))
 
-/do: Digunakan untuk mendeskripsikan keadaan/penampilan karakter, lingkungan sekitar, atau hasil dari suatu aksi. Informasi dalam /do harus jujur (tidak boleh bohong IC/OOC Lie) dan dapat digunakan untuk bertanya tentang kondisi atau memberi kesempatan respon ke pemain lain.
+3.  Buat 3-7 langkah RP yang logis, interaktif (jika relevan), dan berurutan sesuai tema.
+4.  Sertakan delay antara 2-4 detik per langkah (sesuaikan logisnya aksi).
+5.  JANGAN gunakan: emoji, force RP (memaksa hasil pada pemain lain), undetailed RP (terlalu singkat).
+6.  JANGAN berbohong di /do (OOC lie).
 
-Contoh Benar: Terdapat memar di pipinya. ((Frank Rattlesnake)) atau Apakah ada perlawanan? ((Frank Rattlesnake))
+LARANGAN (JANGAN DILAKUKAN):
+- Force RP: "/me memukul John hingga pingsan" ❌
+- Undetailed RP: "/me kaget" ❌
+- Bohong di /do: "/do sakunya kosong (padahal ada uang)" ❌
 
-Contoh Salah: Terambil. ((Frank Rattlesnake)) atau SS'ed, report forum. ((Frank Rattlesnake)) (mengandung OOC atau force RP).
-
-Kesimpulan Utama: Penggunaan /me dan /do yang tepat dan spesifik sangat penting untuk menciptakan pengalaman Roleplay yang imersif dan kreatif, bukan sekadar menyelesaikan tugas atau 'menang'. Hindari penggunaan yang tidak detail, force RP, atau mencampuradukkan OOC.
-LARANGAN:
-- Force RP: "/me knocks John Doe unconscious" ❌
-- Undetailed RP: "/me looks surprised" ❌
-- Bohong di /do (OOC lie): "/do his wallet is empty (but it has money)" ❌
-- /do untuk bertanya: "/do Can he see the gun?" ❌
-
-Contoh BENAR (Bahasa Inggris):
-/me extends his right hand towards the door handle
-/do His right hand grips the handle firmly.
-/me turns the handle clockwise and pushes the door open slowly
-
-JSON only (WAJIB format ini, tanpa teks lain di luar JSON):
+Output HARUS HANYA JSON (WAJIB format ini, tanpa teks lain di luar JSON):
 {{
   "steps": [
     {{"command": "/me ... (dalam bahasa '{language}')", "delay": 2}},
@@ -66,6 +65,8 @@ JSON only (WAJIB format ini, tanpa teks lain di luar JSON):
   ]
 }}
 """
+# --- [AKHIR DARI PROMPT BARU] ---
+
 
 # Mapping ID senjata untuk Gun RP
 WEAPON_LIST = {
@@ -77,6 +78,7 @@ WEAPON_LIST = {
 
 # ============================
 # UI COMPONENTS
+# (Tidak ada perubahan di bagian ini)
 # ============================
 class MacroTypeSelectView(discord.ui.View):
     """View untuk memilih tipe macro"""
@@ -169,7 +171,8 @@ class WeaponSelectView(discord.ui.View):
 
 
 # ============================
-# MODAL KONFIGURASI (DIPERBARUI DENGAN BAHASA)
+# MODAL KONFIGURASI
+# (Tidak ada perubahan di bagian ini)
 # ============================
 
 class ConfigInputModal(discord.ui.Modal):
@@ -347,6 +350,8 @@ class TemplateCreatorCog(commands.Cog, name="TemplateCreator"):
     # --- DIPERBARUI: Terima parameter bahasa ---
     async def _get_ai_analysis(self, theme: str, details: str, language: str) -> Optional[List[Dict]]:
         """Menggunakan AI untuk generate langkah-langkah RP dalam bahasa yang diminta."""
+        # --- [INI BAGIAN KRUSIAL] ---
+        # Prompt sekarang menggunakan AI_TEMPLATE_PROMPT yang baru
         prompt = AI_TEMPLATE_PROMPT.format(theme=theme, details=details, language=language) # Masukkan bahasa ke prompt
         logger.info(f"Mengirim prompt ke AI (Bahasa: {language})") # Log bahasa yang digunakan
 
@@ -355,7 +360,13 @@ class TemplateCreatorCog(commands.Cog, name="TemplateCreator"):
             try:
                 genai.configure(api_key=self.config.GEMINI_API_KEYS[0])
                 model = genai.GenerativeModel('gemini-1.5-flash')
-                response = await model.generate_content_async(prompt)
+                # Perbarui cara memanggil Gemini untuk JSON output
+                response = await model.generate_content_async(
+                    prompt,
+                    generation_config=genai.types.GenerationConfig(
+                        response_mime_type="application/json"
+                    )
+                )
                 cleaned = re.sub(r'```json\s*|\s*```', '', response.text.strip(), flags=re.DOTALL)
                 data = json.loads(cleaned)
                 logger.info("AI (Gemini) berhasil generate.")
@@ -662,8 +673,8 @@ class TemplateCreatorCog(commands.Cog, name="TemplateCreator"):
             value=("Anda bisa input bahasa & aksen di form (opsional). Contoh: `English`, `Spanish (Mexico)`, `Russian accent`."), inline=False
         )
         embed.add_field(
-            name="📝 Aturan AI",
-            value=("✅ /me=Aksi, /do=Hasil\n✅ 3-7 langkah, delay 2-4s\n❌ No Force RP, Undetailed, /do bohong"), inline=False
+            name="📝 Aturan AI (SAMP)",
+            value=("✅ /me=Aksi, /do=Hasil/Tanya\n✅ 3-7 langkah, delay 2-4s\n✅ Konteks SAMP (SOS, Deagle, dll)\n❌ No Force RP, Undetailed, /do bohong"), inline=False
         )
         embed.add_field(
             name="💡 Tips Tema",
