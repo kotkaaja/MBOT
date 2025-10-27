@@ -11,3 +11,4 @@ pydub
 psycopg2-binary
 spotdl
 requests
+Pillow
