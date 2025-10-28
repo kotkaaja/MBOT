@@ -537,6 +537,14 @@ class TemplateCreatorCog(commands.Cog, name="TemplateCreator"):
                             "theme": modal.theme_value, "details": modal.details_value
                         })
                 else:
+                     # --- PERBAIKAN ---
+                     # Hapus pesan tombol jika modal dibatalkan/gagal
+                     if modal_msg:
+                         try:
+                             await modal_msg.edit(content="Pembuatan template dibatalkan.", view=None)
+                         except discord.NotFound:
+                             pass # Pesan mungkin sudah terhapus
+                     # -----------------
                      del self.active_sessions[ctx.author.id]; return # Modal dibatalkan
             else: # Auto RP / CMD
                 if modal.theme_value: # Cek apakah modal berhasil disubmit
@@ -551,16 +559,37 @@ class TemplateCreatorCog(commands.Cog, name="TemplateCreator"):
                     elif macro_type == "cmd":
                         self.active_sessions[ctx.author.id]["command"] = modal.config_value
                 else:
+                    # --- PERBAIKAN ---
+                    # Hapus pesan tombol jika modal dibatalkan/gagal
+                    if modal_msg:
+                         try:
+                             await modal_msg.edit(content="Pembuatan template dibatalkan.", view=None)
+                         except discord.NotFound:
+                             pass # Pesan mungkin sudah terhapus
+                    # -----------------
                     del self.active_sessions[ctx.author.id]; return # Modal dibatalkan
 
         except Exception as e:
             logger.error(f"Error alur konfigurasi: {e}", exc_info=True)
             if ctx.author.id in self.active_sessions: del self.active_sessions[ctx.author.id]
-            if modal_msg: await modal_msg.edit(content=f"❌ Error: {e}", view=None)
-            else: await ctx.send(f"❌ Error: {e}")
+            
+            # --- PERBAIKAN DI BLOK EXCEPT ---
+            # Pastikan modal_msg juga dihapus di sini jika ada error
+            if modal_msg:
+                try:
+                    await modal_msg.edit(content=f"❌ Error: {e}", view=None)
+                except discord.NotFound:
+                    await ctx.send(f"❌ Error: {e}") # Fallback jika modal_msg hilang
+            else:
+                await ctx.send(f"❌ Error: {e}")
             return
+            # -------------------------------
 
-        if modal_msg: await modal_msg.delete()
+        if modal_msg: 
+            try:
+                await modal_msg.delete() # Hapus pesan tombol jika lolos submit
+            except discord.NotFound:
+                pass # Abaikan jika sudah terhapus (misal karena modal gagal)
 
         # --- Generate AI ---
         session = self.active_sessions.get(ctx.author.id)
@@ -658,7 +687,7 @@ class TemplateCreatorCog(commands.Cog, name="TemplateCreator"):
         logger.info(f"Template '{macro_type}' by {ctx.author.id} ({language})")
 
     # --- PERUBAHAN NAMA PERINTAH BANTUAN ---
-    @commands.command(name="templatehelp")
+    @commands.command(name="rphelp")
     # --------------------------------------
     async def template_help_command(self, ctx):
         """Bantuan untuk fitur Template Creator"""
