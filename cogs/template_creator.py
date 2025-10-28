@@ -422,31 +422,32 @@ class TemplateCreatorCog(commands.Cog, name="TemplateCreator"):
         if ctx.author.id in self.active_sessions:
             return await ctx.send("❌ Sesi aktif. Selesaikan/tunggu timeout.", delete_after=10)
 
+        # --- PERBAIKAN: Sesi dibuat di dalam try...finally ---
         self.active_sessions[ctx.author.id] = {}
-
-        # Langkah 1: Pilih Tipe Macro
-        embed_type = discord.Embed(
-            title="🎨 KotkaHelper Template Creator",
-            description=f"**Langkah 1/3:** Pilih tipe macro (Format KHP)", color=0x5865F2
-        )
-        embed_type.add_field(name="⌨️ Auto RP Macro", value="Aktivasi: Hotkey/Button", inline=False)
-        embed_type.add_field(name="💬 CMD Macro", value="Aktivasi: Command chat", inline=False)
-        embed_type.add_field(name="🔫 Gun RP Macro", value="Aktivasi: Otomatis ganti senjata", inline=False)
-
-        type_view = MacroTypeSelectView(ctx.author.id)
-        type_msg = await ctx.send(embed=embed_type, view=type_view)
-
-        await type_view.wait()
-        if not type_view.macro_type:
-            del self.active_sessions[ctx.author.id]
-            return await type_msg.edit(content="⏱️ Timeout.", embed=None, view=None)
-
-        macro_type = type_view.macro_type
-        self.active_sessions[ctx.author.id]["macro_type"] = macro_type
-        await type_msg.delete()
-        modal_msg = None # Untuk pesan tombol buka modal
-
+        modal_msg = None # Definisikan di luar try
+        
         try:
+            # Langkah 1: Pilih Tipe Macro
+            embed_type = discord.Embed(
+                title="🎨 KotkaHelper Template Creator",
+                description=f"**Langkah 1/3:** Pilih tipe macro (Format KHP)", color=0x5865F2
+            )
+            embed_type.add_field(name="⌨️ Auto RP Macro", value="Aktivasi: Hotkey/Button", inline=False)
+            embed_type.add_field(name="💬 CMD Macro", value="Aktivasi: Command chat", inline=False)
+            embed_type.add_field(name="🔫 Gun RP Macro", value="Aktivasi: Otomatis ganti senjata", inline=False)
+
+            type_view = MacroTypeSelectView(ctx.author.id)
+            type_msg = await ctx.send(embed=embed_type, view=type_view)
+
+            await type_view.wait()
+            if not type_view.macro_type:
+                await type_msg.edit(content="⏱️ Timeout.", embed=None, view=None)
+                return # Finally block akan membersihkan sesi
+
+            macro_type = type_view.macro_type
+            self.active_sessions[ctx.author.id]["macro_type"] = macro_type
+            await type_msg.delete()
+            
             # --- Alur Utama ---
             class OpenModalView(discord.ui.View): # Kelas view pembuka modal generik
                     def __init__(self, author_id, button_label):
@@ -464,17 +465,13 @@ class TemplateCreatorCog(commands.Cog, name="TemplateCreator"):
                         return True
 
                     async def open_modal_btn(self, interaction: discord.Interaction):
-                        # --- PERBAIKAN 1: Disable tombol ---
                         # Disable tombol agar tidak bisa diklik lagi
                         for item in self.children:
                             item.disabled = True
                         try:
-                            # Edit pesan untuk menunjukkan tombol non-aktif
                             await interaction.message.edit(view=self)
                         except discord.NotFound:
-                            pass # Pesan mungkin terhapus, abaikan
-                        # ------------------------------------
-                        
+                            pass 
                         self.interaction = interaction
                         self.stop()
 
@@ -484,14 +481,14 @@ class TemplateCreatorCog(commands.Cog, name="TemplateCreator"):
                 weapon_msg = await ctx.send("🔫 **Langkah 2/3:** Pilih senjata:", view=weapon_view)
                 await weapon_view.wait()
                 if not weapon_view.weapon_id or not weapon_view.action:
-                    del self.active_sessions[ctx.author.id]
-                    return await weapon_msg.edit(content="⏱️ Timeout.", view=None)
+                    await weapon_msg.edit(content="⏱️ Timeout.", view=None)
+                    return # Finally block akan membersihkan sesi
+                
                 self.active_sessions[ctx.author.id].update({
                     "weapon_id": weapon_view.weapon_id, "action": weapon_view.action
                 })
                 await weapon_msg.delete()
 
-                # Tentukan modal & label tombol
                 if weapon_view.action == "both":
                     modal = WeaponConfigModalBoth()
                     modal_button_label = "📝 Isi Tema Keluarkan & Simpan (Langkah 3/3)"
@@ -510,83 +507,61 @@ class TemplateCreatorCog(commands.Cog, name="TemplateCreator"):
             await view.wait()
 
             if not view.interaction:
-                del self.active_sessions[ctx.author.id]
-                return await modal_msg.edit(content="⏱️ Timeout.", view=None)
+                await modal_msg.edit(content="⏱️ Timeout.", view=None)
+                return # Finally block akan membersihkan sesi
 
             await view.interaction.response.send_modal(modal)
             await modal.wait() # Tunggu modal di-submit
 
-            # Simpan hasil modal
+            # --- PERBAIKAN: Cek modal cancel dan return ---
+            # Jika modal dibatalkan, `theme_value` atau `language_value` akan None
             if macro_type == "gun":
-                if modal.language_value: # Cek apakah modal berhasil disubmit
-                    self.active_sessions[ctx.author.id]["language"] = modal.language_value
-                    if self.active_sessions[ctx.author.id]["action"] == "both":
-                        self.active_sessions[ctx.author.id].update({
-                            "theme_draw": modal.theme_draw_value, "details_draw": modal.details_draw_value,
-                            "theme_holster": modal.theme_holster_value, "details_holster": modal.details_holster_value
-                        })
-                    else:
-                        self.active_sessions[ctx.author.id].update({
-                            "theme": modal.theme_value, "details": modal.details_value
-                        })
-                else:
-                     # --- PERBAIKAN 2: Cleanup saat modal cancel ---
-                     try:
-                         if modal_msg:
-                             await modal_msg.edit(content="Pembuatan template dibatalkan.", view=None)
-                     except Exception as e:
-                         logger.warning(f"Gagal edit modal_msg saat cancel (gun): {e}")
-                     del self.active_sessions[ctx.author.id]; return
-            else: # Auto RP / CMD
-                if modal.theme_value: # Cek apakah modal berhasil disubmit
+                if not modal.language_value:
+                    await modal_msg.edit(content="Pembuatan template dibatalkan.", view=None)
+                    return # Finally block akan membersihkan sesi
+                
+                # Simpan hasil modal jika sukses
+                self.active_sessions[ctx.author.id]["language"] = modal.language_value
+                if self.active_sessions[ctx.author.id]["action"] == "both":
                     self.active_sessions[ctx.author.id].update({
-                        "theme": modal.theme_value, "details": modal.details_value,
-                        "language": modal.language_value
+                        "theme_draw": modal.theme_draw_value, "details_draw": modal.details_draw_value,
+                        "theme_holster": modal.theme_holster_value, "details_holster": modal.details_holster_value
                     })
-                    if macro_type == "auto_rp":
-                         self.active_sessions[ctx.author.id].update({
-                            "modifier": modal.config_value["modifier"], "primary_key": modal.config_value["primary_key"]
-                         })
-                    elif macro_type == "cmd":
-                        self.active_sessions[ctx.author.id]["command"] = modal.config_value
                 else:
-                    # --- PERBAIKAN 2: Cleanup saat modal cancel ---
-                    try:
-                        if modal_msg:
-                            await modal_msg.edit(content="Pembuatan template dibatalkan.", view=None)
-                    except Exception as e:
-                        logger.warning(f"Gagal edit modal_msg saat cancel (cmd/auto): {e}")
-                    del self.active_sessions[ctx.author.id]; return
-
-        except Exception as e:
-            logger.error(f"Error alur konfigurasi: {e}", exc_info=True)
-            if ctx.author.id in self.active_sessions: del self.active_sessions[ctx.author.id] # Pastikan sesi dihapus
+                    self.active_sessions[ctx.author.id].update({
+                        "theme": modal.theme_value, "details": modal.details_value
+                    })
             
-            try:
-                if modal_msg:
-                    await modal_msg.edit(content=f"❌ Error: {e}", view=None)
-                else:
-                    await ctx.send(f"❌ Error: {e}")
-            except Exception as e_inner:
-                 logger.error(f"Gagal kirim error cleanup: {e_inner}")
-                 await ctx.send(f"❌ Error: {e}") # Fallback
-            return
+            else: # Auto RP / CMD
+                if not modal.theme_value:
+                    await modal_msg.edit(content="Pembuatan template dibatalkan.", view=None)
+                    return # Finally block akan membersihkan sesi
+                
+                # Simpan hasil modal jika sukses
+                self.active_sessions[ctx.author.id].update({
+                    "theme": modal.theme_value, "details": modal.details_value,
+                    "language": modal.language_value
+                })
+                if macro_type == "auto_rp":
+                     self.active_sessions[ctx.author.id].update({
+                        "modifier": modal.config_value["modifier"], "primary_key": modal.config_value["primary_key"]
+                     })
+                elif macro_type == "cmd":
+                    self.active_sessions[ctx.author.id]["command"] = modal.config_value
 
-        if modal_msg: 
-            try:
-                await modal_msg.delete() # Hapus pesan tombol jika lolos submit
-            except discord.NotFound:
-                pass # Abaikan jika sudah terhapus
+            # Hapus pesan tombol jika lolos submit
+            await modal_msg.delete()
+            modal_msg = None # Set ke None agar finally tidak error
 
-        # --- Generate AI ---
-        session = self.active_sessions.get(ctx.author.id)
-        if not session: return await ctx.send("❌ Sesi Error.")
+            # --- Generate AI ---
+            session = self.active_sessions.get(ctx.author.id)
+            if not session: 
+                raise Exception("Sesi tidak ditemukan setelah modal submit.")
 
-        loading_msg = await ctx.send("🤖 **Generating AI...**")
-        steps_draw, steps_holster, steps_single = None, None, None
-        language = session.get("language", "Bahasa Indonesia baku") # Ambil bahasa dari sesi
+            loading_msg = await ctx.send("🤖 **Generating AI...**")
+            steps_draw, steps_holster, steps_single = None, None, None
+            language = session.get("language", "Bahasa Indonesia baku") # Ambil bahasa dari sesi
 
-        try:
             if session.get("macro_type") == "gun" and session.get("action") == "both":
                 theme_d = session.get("theme_draw", "mengeluarkan")
                 details_d = session.get("details_draw", "")
@@ -603,61 +578,57 @@ class TemplateCreatorCog(commands.Cog, name="TemplateCreator"):
                 await loading_msg.edit(content=f"🤖 Generating RP ({language})...")
                 steps_single = await self._get_ai_analysis(theme, details, language)
                 if not steps_single: raise Exception("AI Gagal (Single)")
-        except Exception as ai_error:
-             del self.active_sessions[ctx.author.id]
-             return await loading_msg.edit(content=f"❌ Gagal generate AI: {ai_error}")
 
-        # --- Format & Kirim Hasil ---
-        session = self.active_sessions[ctx.author.id] # Refresh
-        theme_display = "N/A" # Fallback
+            # --- Format & Kirim Hasil ---
+            session = self.active_sessions[ctx.author.id] # Refresh
+            theme_display = "N/A" # Fallback
 
-        if macro_type == "auto_rp":
-            title = f"RP {session['theme'][:30]}"
-            output = self._format_pc_auto_rp(title, session["modifier"], session["primary_key"], steps_single)
-            filename = "KotkaHelper_Macros.txt"
-            theme_display = session['theme']
-            footer_text = f"AI ({language}) • {len(steps_single)} langkah"
-        elif macro_type == "cmd":
-            title = f"RP {session['theme'][:30]}"
-            output = self._format_pc_cmd_macro(title, session["command"], steps_single)
-            filename = "KotkaHelper_CmdMacros.txt"
-            theme_display = session['theme']
-            footer_text = f"AI ({language}) • {len(steps_single)} langkah"
-        else: # gun
-            action = session.get("action", "draw")
-            if action == "both":
-                title_draw = f"RP {session['theme_draw'][:25]} (K)"
-                title_holster = f"RP {session['theme_holster'][:25]} (S)"
-                output_draw = self._format_pc_gun_rp(title_draw, session["weapon_id"], "draw", steps_draw)
-                output_holster = self._format_pc_gun_rp(title_holster, session["weapon_id"], "holster", steps_holster)
-                output = output_draw + "\n" + output_holster
-                theme_display = f"Keluarkan: {session['theme_draw']}\nSimpan: {session['theme_holster']}"
-                footer_text = f"AI ({language}) • {len(steps_draw)} + {len(steps_holster)} langkah"
-            else:
+            if macro_type == "auto_rp":
                 title = f"RP {session['theme'][:30]}"
-                output = self._format_pc_gun_rp(title, session["weapon_id"], action, steps_single)
-                filename = "KotkaHelper_GunRP.txt"
+                output = self._format_pc_auto_rp(title, session["modifier"], session["primary_key"], steps_single)
+                filename = "KotkaHelper_Macros.txt"
                 theme_display = session['theme']
                 footer_text = f"AI ({language}) • {len(steps_single)} langkah"
-            filename = "KotkaHelper_GunRP.txt" # filename selalu sama untuk Gun RP
+            elif macro_type == "cmd":
+                title = f"RP {session['theme'][:30]}"
+                output = self._format_pc_cmd_macro(title, session["command"], steps_single)
+                filename = "KotkaHelper_CmdMacros.txt"
+                theme_display = session['theme']
+                footer_text = f"AI ({language}) • {len(steps_single)} langkah"
+            else: # gun
+                action = session.get("action", "draw")
+                if action == "both":
+                    title_draw = f"RP {session['theme_draw'][:25]} (K)"
+                    title_holster = f"RP {session['theme_holster'][:25]} (S)"
+                    output_draw = self._format_pc_gun_rp(title_draw, session["weapon_id"], "draw", steps_draw)
+                    output_holster = self._format_pc_gun_rp(title_holster, session["weapon_id"], "holster", steps_holster)
+                    output = output_draw + "\n" + output_holster
+                    theme_display = f"Keluarkan: {session['theme_draw']}\nSimpan: {session['theme_holster']}"
+                    footer_text = f"AI ({language}) • {len(steps_draw)} + {len(steps_holster)} langkah"
+                else:
+                    title = f"RP {session['theme'][:30]}"
+                    output = self._format_pc_gun_rp(title, session["weapon_id"], action, steps_single)
+                    filename = "KotkaHelper_GunRP.txt"
+                    theme_display = session['theme']
+                    footer_text = f"AI ({language}) • {len(steps_single)} langkah"
+                filename = "KotkaHelper_GunRP.txt" 
 
-        embed_result = discord.Embed(
-            title="✅ Template Berhasil Dibuat!",
-            description=f"**Tipe:** {macro_type.replace('_', ' ').title()}\n**Tema:** {theme_display}\n**Bahasa:** {language}",
-            color=0x00FF00
-        )
-        embed_result.add_field(
-            name="📋 Cara Pakai (PC/Mobile - KHP Format)",
-            value=(
-                f"1. Buka file `{filename}`.\n"
-                + ("2. File ini berisi 2 template (Keluarkan & Simpan).\n3. Copy-paste *kedua* template." if macro_type=="gun" and action=="both"
-                   else f"2. Copy isi file di bawah.\n3. Paste ke *akhir* file `{filename}` Anda.") + "\n4. Simpan & restart script."
-            ),
-            inline=False
-        )
-        embed_result.set_footer(text=footer_text)
+            embed_result = discord.Embed(
+                title="✅ Template Berhasil Dibuat!",
+                description=f"**Tipe:** {macro_type.replace('_', ' ').title()}\n**Tema:** {theme_display}\n**Bahasa:** {language}",
+                color=0x00FF00
+            )
+            embed_result.add_field(
+                name="📋 Cara Pakai (PC/Mobile - KHP Format)",
+                value=(
+                    f"1. Buka file `{filename}`.\n"
+                    + ("2. File ini berisi 2 template (Keluarkan & Simpan).\n3. Copy-paste *kedua* template." if macro_type=="gun" and action=="both"
+                       else f"2. Copy isi file di bawah.\n3. Paste ke *akhir* file `{filename}` Anda.") + "\n4. Simpan & restart script."
+                ),
+                inline=False
+            )
+            embed_result.set_footer(text=footer_text)
 
-        try:
             import io
             file_content = output.encode('utf-8')
             file_buffer = io.BytesIO(file_content)
@@ -665,13 +636,29 @@ class TemplateCreatorCog(commands.Cog, name="TemplateCreator"):
             file = discord.File(fp=file_buffer, filename=filename)
             await loading_msg.delete()
             await ctx.send(embed=embed_result, file=file)
-        except Exception as file_error:
-            logger.error(f"Error buat file: {file_error}", exc_info=True)
-            await loading_msg.edit(content=f"⚠️ Gagal buat file:\n```\n{output[:1900]}\n```")
-            if len(output) > 1900: await ctx.send(f"```\n{output[1900:][:1900]}\n```")
 
-        del self.active_sessions[ctx.author.id] # Hapus sesi setelah selesai
-        logger.info(f"Template '{macro_type}' by {ctx.author.id} ({language})")
+            logger.info(f"Template '{macro_type}' by {ctx.author.id} ({language})")
+
+        except Exception as e:
+            logger.error(f"Error alur konfigurasi: {e}", exc_info=True)
+            try:
+                # Coba edit pesan yang ada jika gagal
+                error_msg = f"❌ Terjadi error: {e}"
+                if modal_msg and not modal_msg.is_done():
+                    await modal_msg.edit(content=error_msg, view=None)
+                else:
+                    await ctx.send(error_msg)
+            except Exception as e_inner:
+                logger.error(f"Gagal kirim error cleanup: {e_inner}")
+                await ctx.send(f"❌ Terjadi error: {e}") # Fallback
+        
+        finally:
+            # --- PERBAIKAN: Blok Finally ---
+            # Blok ini akan *selalu* berjalan, tidak peduli fungsi 'return' atau 'raise Exception'
+            if ctx.author.id in self.active_sessions:
+                del self.active_sessions[ctx.author.id]
+                logger.info(f"Sesi !buatrp for {ctx.author.id} dibersihkan.")
+
 
     @commands.command(name="rphelp")
     async def template_help_command(self, ctx):
@@ -711,9 +698,12 @@ class TemplateCreatorCog(commands.Cog, name="TemplateCreator"):
     @commands.Cog.listener()
     async def on_command_error(self, ctx, error):
         """Error handler untuk Template Creator"""
-        if ctx.command and ctx.command.name not in ['buatrp', 'templatehelp']: return # Sesuaikan nama
+        if ctx.command and ctx.command.name not in ['buatrp', 'templatehelp']: return 
         if isinstance(error, commands.CommandNotFound): return
-        if ctx.author.id in self.active_sessions: del self.active_sessions[ctx.author.id]
+        
+        # --- PERBAIKAN: Hapus pembersihan sesi di sini ---
+        # Pembersihan sesi sekarang ditangani oleh try...finally di dalam command
+        # if ctx.author.id in self.active_sessions: del self.active_sessions[ctx.author.id]
 
         if isinstance(error, commands.CommandInvokeError):
             if isinstance(error.original, discord.NotFound):
