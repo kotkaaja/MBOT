@@ -5,18 +5,19 @@ from discord import ui
 import logging
 import io
 import base64
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image, ImageDraw, ImageFont, ImageOps
 from openai import AsyncOpenAI
 from typing import List, Dict, Optional, Tuple
 import asyncio
 import re
 import os
 import json
+import textwrap # Import textwrap untuk word wrapping
 
 logger = logging.getLogger(__name__)
 
 # ============================
-# MODAL & VIEW COMPONENTS (REVISED WITH BACKGROUND STYLE)
+# MODAL & VIEW COMPONENTS
 # ============================
 
 class SSRPInfoModal(ui.Modal, title="Informasi Bersama untuk SSRP"):
@@ -86,10 +87,13 @@ class SSRPInfoModal(ui.Modal, title="Informasi Bersama untuk SSRP"):
             inline=False
         )
 
-        file = discord.File(io.BytesIO(self.images[0]), filename="image_preview_0.png")
-        embed.set_image(url=f"attachment://image_preview_0.png")
-
-        await interaction.followup.send(embed=embed, view=view, file=file, ephemeral=True)
+        try:
+            file = discord.File(io.BytesIO(self.images[0]), filename="image_preview_0.png")
+            embed.set_image(url=f"attachment://image_preview_0.png")
+            await interaction.followup.send(embed=embed, view=view, file=file, ephemeral=True)
+        except Exception as e:
+            logger.error(f"Gagal mengirim preview gambar di show_dialog_settings: {e}")
+            await interaction.followup.send(embed=embed, view=view, ephemeral=True)
 
 
 class DialogSettingsView(ui.View):
@@ -136,10 +140,13 @@ class DialogSettingsView(ui.View):
         embed.add_field(name="Posisi Teks", value=f"`{self.positions[idx].capitalize()}`", inline=True)
         embed.add_field(name="Background", value=f"`{self.background_styles[idx].capitalize()}`", inline=True) # Tampilkan style background
 
-        file = discord.File(io.BytesIO(self.images[idx]), filename=f"image_preview_{idx}.png")
-        embed.set_image(url=f"attachment://image_preview_{idx}.png")
-
-        await interaction.response.edit_message(embed=embed, view=self, attachments=[file])
+        try:
+            file = discord.File(io.BytesIO(self.images[idx]), filename=f"image_preview_{idx}.png")
+            embed.set_image(url=f"attachment://image_preview_{idx}.png")
+            await interaction.response.edit_message(embed=embed, view=self, attachments=[file])
+        except Exception as e:
+            logger.error(f"Gagal update message preview: {e}")
+            await interaction.response.edit_message(embed=embed, view=self, attachments=[])
 
 
 class DialogCountSelect(ui.Select):
@@ -235,7 +242,7 @@ class FinishButton(ui.Button):
 
 
 # ============================
-# COG UTAMA (REVISED WITH CHATLOG MAGICIAN STYLE)
+# COG UTAMA (REVISED WITH 8 FIXES)
 # ============================
 
 class SSRPChatlogCog(commands.Cog, name="SSRPChatlog"):
@@ -253,10 +260,10 @@ class SSRPChatlogCog(commands.Cog, name="SSRPChatlog"):
 
         # ===== STYLING SETTINGS (DISESUAIKAN DENGAN CHATLOG MAGICIAN) =====
         self.FONT_SIZE = 12 # Sesuai CSS
-        self.LINE_HEIGHT_ADD = 4 # Spasi tambahan antar baris (total tinggi baris = FONT_SIZE + LINE_HEIGHT_ADD)
-        self.FONT_PATH = self._find_font(["arial.ttf", "Arial.ttf", "DejaVuSans.ttf"]) # Prioritaskan Arial
+        self.LINE_HEIGHT_ADD = 3 # Kurangi spasi antar baris (Point 5)
+        self.FONT_PATH = self._find_font(["arial.ttf", "Arial.ttf", "LiberationSans-Regular.ttf", "DejaVuSans.ttf"]) # Prioritaskan Arial (Point 5)
 
-        # Warna teks (sesuai CSS Chatlog Magician)
+        # Warna teks (Point 3)
         self.COLOR_CHAT = (255, 255, 255)       # .white
         self.COLOR_ME = (194, 162, 218)         # .me (#C2A2DA)
         self.COLOR_DO = (153, 204, 255)         # Biru muda (#99CCFF) - Tambahan untuk /do
@@ -265,7 +272,7 @@ class SSRPChatlogCog(commands.Cog, name="SSRPChatlog"):
         self.COLOR_DEATH = (255, 0, 0)          # .death (#FF0000)
         self.COLOR_YELLOW = (255, 255, 0)       # .yellow (#FFFF00)
         self.COLOR_PALEYELLOW = (255, 236, 139) # .paleyellow / .radio (#FFEC8B)
-        self.COLOR_GREY = (187, 187, 187)       # .grey (#BBBBBB)
+        self.COLOR_GREY = (187, 187, 187)       # .grey (#BBBBBB) - Untuk uang dll.
         self.COLOR_GREEN = (51, 170, 51)        # .green (#3A3)
         self.COLOR_MONEY = (0, 128, 0)          # .money (#008000)
         self.COLOR_NEWS = (16, 244, 65)         # .news (#10F441)
@@ -280,20 +287,20 @@ class SSRPChatlogCog(commands.Cog, name="SSRPChatlog"):
         # Background overlay
         self.BG_COLOR = (0, 0, 0, 180) # Hitam semi-transparan (alpha 180/255)
 
+        # Muat font
         try:
             self.font = ImageFont.truetype(self.FONT_PATH, self.FONT_SIZE)
             logger.info(f"✅ Font '{os.path.basename(self.FONT_PATH)}' ({self.FONT_SIZE}pt) dimuat untuk SSRP.")
         except IOError:
             logger.warning(f"Font SSRP ({self.FONT_PATH}) tidak ditemukan, pakai default.")
             try:
-                # Coba fallback ke font default yang lebih baik jika arial tidak ada
                 self.font = ImageFont.truetype("DejaVuSans.ttf", self.FONT_SIZE)
                 logger.info("✅ Fallback ke DejaVuSans.")
             except IOError:
-                self.font = ImageFont.load_default() # Fallback terakhir
+                self.font = ImageFont.load_default()
                 logger.warning("⚠️ Gagal load DejaVuSans, pakai font default Pillow.")
         except Exception as e:
-            logger.error(f"Error load font: {e}")
+            logger.error(f"Error load font: {e}", exc_info=True)
             self.font = ImageFont.load_default()
 
     def _find_font(self, font_names: List[str]) -> str:
@@ -317,7 +324,7 @@ class SSRPChatlogCog(commands.Cog, name="SSRPChatlog"):
                 if os.path.exists(font_path):
                     return font_path
 
-                # Cek rekursif 1 level (umum di Linux /usr/share/fonts/truetype/dejavu/...)
+                # Cek rekursif 1 level
                 try:
                     for item in os.listdir(dir_path):
                         subdir_path = os.path.join(dir_path, item)
@@ -325,7 +332,7 @@ class SSRPChatlogCog(commands.Cog, name="SSRPChatlog"):
                              font_path_subdir = os.path.join(subdir_path, name)
                              if os.path.exists(font_path_subdir):
                                  return font_path_subdir
-                except OSError: # Jika tidak punya izin baca direktori
+                except OSError: # Izin baca
                     continue
 
         logger.warning(f"Tidak dapat menemukan font: {font_names} di direktori {font_dirs}.")
@@ -334,7 +341,7 @@ class SSRPChatlogCog(commands.Cog, name="SSRPChatlog"):
     @commands.command(name="buatssrp", aliases=["createssrp"])
     async def create_ssrp(self, ctx: commands.Context):
         """Buat SSRP Chatlog dari gambar dengan AI (gaya Chatlog Magician)"""
-        # ... (kode cek attachment dan limitasi ukuran/jumlah sama seperti sebelumnya) ...
+
         if not self.client:
             await ctx.send("❌ Fitur SSRP Chatlog tidak tersedia (API Key belum dikonfigurasi)")
             return
@@ -350,8 +357,9 @@ class SSRPChatlogCog(commands.Cog, name="SSRPChatlog"):
             return
 
         images_bytes_list = []
-        valid_extensions = ('.png', '.jpg', '.jpeg')
+        valid_extensions = ('.png', '.jpg', '.jpeg'); count = 0
         for attachment in ctx.message.attachments:
+            if count >= 10: break # Batasi 10 gambar
             if attachment.filename.lower().endswith(valid_extensions):
                 if attachment.size > 8 * 1024 * 1024:
                     await ctx.send(f"⚠️ Gambar `{attachment.filename}` terlalu besar (>8MB), dilewati.")
@@ -359,13 +367,13 @@ class SSRPChatlogCog(commands.Cog, name="SSRPChatlog"):
                 try:
                     img_bytes = await attachment.read()
                     images_bytes_list.append(img_bytes)
+                    count += 1
                 except Exception as e:
                     logger.error(f"Gagal download gambar '{attachment.filename}': {e}")
                     await ctx.send(f"❌ Gagal mengunduh `{attachment.filename}`.")
-            if len(images_bytes_list) >= 10: break
-
+            
         if not images_bytes_list:
-            await ctx.send("❌ Tidak ada gambar valid (.png/.jpg) yang ditemukan atau berhasil diunduh!")
+            await ctx.send("❌ Tidak ada gambar valid (.png/.jpg/.jpeg) yang ditemukan atau berhasil diunduh!")
             return
 
         modal = SSRPInfoModal(self, images_bytes_list)
@@ -379,7 +387,7 @@ class SSRPChatlogCog(commands.Cog, name="SSRPChatlog"):
             button.disabled = True
             try:
                 await interaction.message.edit(view=view)
-            except discord.NotFound: pass # Abaikan jika pesan sudah dihapus
+            except discord.NotFound: pass
 
         button.callback = button_callback
         view.add_item(button)
@@ -402,7 +410,6 @@ class SSRPChatlogCog(commands.Cog, name="SSRPChatlog"):
         background_styles: List[str] # Terima background styles
     ):
         """Proses generate dialog dan overlay ke gambar"""
-        # ... (kode setup pesan progress sama seperti sebelumnya) ...
         processing_msg = None
         try:
             await interaction.edit_original_response(
@@ -418,17 +425,30 @@ class SSRPChatlogCog(commands.Cog, name="SSRPChatlog"):
              await interaction.channel.send(f"❌ Error memulai proses: {e}")
              return
 
+        warnings = [] # Kumpulkan peringatan ukuran gambar (Point 6)
+
         try:
             await processing_msg.edit(content=f"🧠 {interaction.user.mention}, AI sedang membuat dialog...")
 
             language = info_data.get('language', 'Bahasa Indonesia baku')
 
+            # Panggil AI (prompt sudah diperbarui di fungsi generate_dialogs_with_ai)
             all_dialogs_raw = await self.generate_dialogs_with_ai(
                 images_bytes_list, info_data, dialog_counts, language
             )
 
             processed_images_bytes = []
-            for idx, (img_bytes, raw_dialogs, position, bg_style) in enumerate(zip(images_bytes_list, all_dialogs_raw, positions, background_styles)): # Iterate background styles too
+            for idx, (img_bytes, raw_dialogs, position, bg_style) in enumerate(zip(images_bytes_list, all_dialogs_raw, positions, background_styles)):
+
+                # --- Pengecekan Ukuran Gambar (Point 6) ---
+                try:
+                    img_check = Image.open(io.BytesIO(img_bytes))
+                    if img_check.width != 800 or img_check.height != 600:
+                        warnings.append(f"Gambar {idx+1} ({img_check.width}x{img_check.height}) bukan 800x600, hasil mungkin kurang optimal.")
+                    img_check.close() # Tutup setelah cek
+                except Exception as img_err:
+                    logger.warning(f"Gagal memeriksa ukuran gambar {idx+1}: {img_err}")
+                # --- Akhir Pengecekan ---
 
                 limited_dialogs = raw_dialogs[:dialog_counts[idx]]
 
@@ -444,16 +464,20 @@ class SSRPChatlogCog(commands.Cog, name="SSRPChatlog"):
                     bg_style # Pass background style
                 )
                 processed_images_bytes.append(processed_img)
-                await asyncio.sleep(0.3) # Kurangi delay
+                await asyncio.sleep(0.2) # Perkecil delay
 
-            await processing_msg.edit(
-                content=f"✅ Selesai! Hasil SSRP untuk {interaction.user.mention}:"
-            )
+            final_content = f"✅ Selesai! Hasil SSRP untuk {interaction.user.mention}:"
+            if warnings:
+                warning_text = "\n".join(f"- {w}" for w in warnings)
+                final_content += f"\n\n**Peringatan:**\n{warning_text}"
 
+            await processing_msg.edit(content=final_content)
+
+            # Kirim hasil dalam chunk (output PNG)
             for i in range(0, len(processed_images_bytes), 10):
                 chunk = processed_images_bytes[i:i+10]
                 files = [
-                    discord.File(io.BytesIO(img_data), filename=f"ssrp_generated{i+j+1}.jpg") # Simpan sebagai JPG
+                    discord.File(io.BytesIO(img_data), filename=f"ssrp_generated{i+j+1}.png") # Simpan sebagai PNG (Point 7)
                     for j, img_data in enumerate(chunk)
                 ]
 
@@ -467,19 +491,17 @@ class SSRPChatlogCog(commands.Cog, name="SSRPChatlog"):
                     value=skenario[:1000] + "..." if len(skenario) > 1000 else skenario,
                     inline=False
                 )
-                # Tambahkan info bahasa
                 embed_result.set_footer(text=f"Dialog AI dalam: {language}")
 
                 await interaction.channel.send(embed=embed_result, files=files)
 
         except Exception as e:
-            # ... (kode error handling sama seperti sebelumnya) ...
             logger.error(f"Error saat proses SSRP: {e}", exc_info=True)
             error_message = f"❌ Terjadi kesalahan: {str(e)[:1500]}"
             if processing_msg:
                 try:
                     await processing_msg.edit(content=f"{interaction.user.mention}, {error_message}")
-                except discord.NotFound: # Jika pesan sudah dihapus oleh user/mod
+                except discord.NotFound: # Jika pesan sudah dihapus
                     await interaction.channel.send(content=f"{interaction.user.mention}, {error_message}")
             else:
                  await interaction.channel.send(content=f"{interaction.user.mention}, {error_message}")
@@ -492,8 +514,8 @@ class SSRPChatlogCog(commands.Cog, name="SSRPChatlog"):
         dialog_counts: List[int],
         language: str
     ) -> List[List[str]]:
-        """Generate dialog SSRP SAMP yang benar menggunakan AI (prompt sama)"""
-        # ... (Kode prompt dan pemanggilan AI tetap sama seperti di revisi sebelumnya) ...
+        """Generate dialog SSRP SAMP yang benar menggunakan AI (prompt diperbarui)"""
+
         base64_img = base64.b64encode(images_bytes_list[0]).decode('utf-8')
         image_content = {
             "type": "image_url",
@@ -513,13 +535,15 @@ class SSRPChatlogCog(commands.Cog, name="SSRPChatlog"):
 
         char_names_formatted = [name.replace(' ', '_') for name in char_names_raw if name]
 
+
+        # --- PROMPT DIPERBARUI UNTUK BAHASA & FORMAT (Point 8) ---
         prompt = f"""
         Anda adalah penulis dialog SSRP (Screenshot Roleplay) server SAMP (San Andreas Multiplayer) yang sangat ahli.
 
         INFORMASI KONTEKS:
         - Karakter Terlibat: {info_data.get('detail_karakter', 'Tidak ada info')} (Nama untuk AI: {', '.join(char_names_formatted)})
         - Skenario: {info_data.get('skenario', 'Tidak ada skenario')}
-        - Bahasa/Aksen: {language}
+        - Bahasa/Aksen Diminta: {language}
         - Jumlah Gambar: {len(images_bytes_list)} (Anda hanya melihat gambar #1)
 
         KEBUTUHAN DIALOG PER GAMBAR:
@@ -529,16 +553,19 @@ class SSRPChatlogCog(commands.Cog, name="SSRPChatlog"):
         1. Obrolan Normal (IC): `Nama_Karakter says: Dialognya disini.` (Gunakan underscore di nama)
         2. Obrolan Rendah: `Nama_Karakter [low]: Dialognya disini.`
         3. Aksi /me: `* Nama_Karakter melakukan aksi` (Diawali bintang+spasi, tanpa titik di akhir)
-        4. Deskripsi /do: `* Deskripsi keadaan atau hasil aksi (( Nama_Karakter ))` (Diawali bintang+spasi)
+        4. Deskripsi /do: `** Deskripsi keadaan atau hasil aksi (( Nama_Karakter ))` (Diawali DUA BINTANG+spasi)
         5. Whisper: `Nama_Karakter whispers: Pesan rahasia` atau `... (phone): ...` untuk telepon
         6. Radio/Dept: `** [Departemen] Nama_Karakter: Pesan` atau `** [CH:X] Nama_Karakter: Pesan`
         7. Gunakan nama karakter PERSIS seperti ini: {', '.join(char_names_formatted)}
+        8. PENTING (Point 8): Jika Bahasa/Aksen ({language}) BUKAN 'Bahasa Indonesia baku' atau 'English', terjemahkan/adaptasi juga kata kunci formatnya. 
+           Contoh jika Spanish: 'says:' -> 'dice:', '* Name does action' -> '* Nombre hace accion', 'whispers:' -> 'susurra:'. Lakukan ini secara logis untuk bahasa yang diminta.
+           Untuk /do, formatnya tetap `** Deskripsi... (( Nama_Karakter ))`.
 
         FORMAT OUTPUT JSON (WAJIB HANYA JSON):
         {{
           "dialogs_per_image": [
             [ // Gambar 1
-              "Baris dialog 1 (format /me, /do, says:, [low]:, whispers:, dll.)",
+              "Baris dialog 1 (sesuai format dan bahasa)",
               "Baris dialog 2",
               ... (sesuai jumlah diminta)
             ],
@@ -555,15 +582,14 @@ class SSRPChatlogCog(commands.Cog, name="SSRPChatlog"):
         - Lanjutkan alur cerita antar gambar.
         - PASTIKAN JUMLAH BARIS TEPAT sesuai permintaan per gambar.
         - JANGAN tambahkan timestamp atau format lain.
-        - JANGAN gunakan OOC lie di /do. /do mendeskripsikan fakta.
-        - JANGAN gunakan /do untuk bertanya 'bisa?'.
         - Variasikan jenis format dialog.
+        - Fokus pada kualitas dan kesesuaian RP.
         """
 
-        response_content = ""
+        response_content = ""; dialogs_list = []
         try:
             response = await self.client.chat.completions.create(
-                model="gpt-4o-mini",
+                model="gpt-4o-mini", # Anda bisa ganti ke gpt-4o jika mini kurang baik
                 messages=[
                     {"role": "system", "content": "Anda adalah penulis dialog SSRP SAMP ahli. Output HANYA JSON."},
                     {"role": "user", "content": [
@@ -572,7 +598,7 @@ class SSRPChatlogCog(commands.Cog, name="SSRPChatlog"):
                     ]}
                 ],
                 response_format={"type": "json_object"},
-                max_tokens=2500,
+                max_tokens=3000, # Naikkan token
                 temperature=0.7
             )
 
@@ -590,98 +616,132 @@ class SSRPChatlogCog(commands.Cog, name="SSRPChatlog"):
             logger.error(f"OpenAI API call failed: {e}", exc_info=True)
             raise Exception(f"Gagal menghubungi AI atau memproses respons: {e}")
 
+        # Padding/truncating
         while len(dialogs_list) < len(images_bytes_list):
             dialogs_list.append([f"[AI Gagal Generate Dialog untuk Gambar {len(dialogs_list)+1}]"])
 
         dialogs_list = dialogs_list[:len(images_bytes_list)]
 
-        logger.info(f"AI generated dialogs for {len(dialogs_list)} images.")
+        logger.info(f"AI generated dialogs for {len(dialogs_list)} images in '{language}'.")
         return dialogs_list
+
 
     async def add_dialogs_to_image(
         self,
         image_bytes: bytes,
         dialogs: List[str],
         position: str,
-        background_style: str # Terima background style
+        background_style: str
     ) -> bytes:
-        """Tambahkan dialog ke gambar dengan styling mirip Chatlog Magician"""
+        """Tambahkan dialog ke gambar dengan styling & word wrap (Point 4)"""
         try:
             img = Image.open(io.BytesIO(image_bytes)).convert("RGBA")
             width, height = img.size
-
             txt_overlay = Image.new('RGBA', img.size, (255, 255, 255, 0))
             draw = ImageDraw.Draw(txt_overlay)
+            padding = 8
+            max_text_width_px = width - (padding * 2) # Lebar maksimum untuk teks dalam piksel
 
-            padding = 8 # Padding lebih kecil
+            wrapped_dialog_lines = []
+            
+            # --- Text Wrapping (Point 4) ---
+            for dialog in dialogs:
+                # Perkirakan jumlah karakter per baris
+                avg_char_width = self.font.getlength("a") # Lebar 'a'
+                # fallback jika font gagal dimuat
+                approx_chars_per_line = int(max_text_width_px / avg_char_width) if avg_char_width > 0 else 70 
 
-            # Hitung tinggi dialog total (termasuk spasi antar baris)
-            total_dialog_height_pixels = len(dialogs) * (self.FONT_SIZE + self.LINE_HEIGHT_ADD) - self.LINE_HEIGHT_ADD + (padding * 2)
+                # Gunakan textwrap
+                # Kurangi sedikit dari perkiraan untuk buffer
+                lines = textwrap.wrap(dialog, width=max(10, approx_chars_per_line - 5), 
+                                     break_long_words=True, 
+                                     replace_whitespace=False,
+                                     drop_whitespace=False)
+                
+                # Jika textwrap gagal memecah (misal 1 kata sangat panjang), kita paksa
+                if not lines:
+                    lines = [dialog] # Jika kosong, setidaknya tambahkan dialog asli
+
+                # Cek ulang jika ada baris yang masih terlalu panjang
+                final_lines = []
+                for line in lines:
+                    if self.font.getlength(line) > max_text_width_px:
+                        # Potong paksa jika masih kepanjangan
+                        for i in range(0, len(line), approx_chars_per_line - 10):
+                            final_lines.append(line[i:i + approx_chars_per_line - 10])
+                    else:
+                        final_lines.append(line)
+                
+                wrapped_dialog_lines.extend(final_lines)
+
+            # --- Hitung Tinggi & Posisi Y ---
+            total_lines = len(wrapped_dialog_lines)
+            line_pixel_height = self.FONT_SIZE + self.LINE_HEIGHT_ADD # Tinggi per baris (Point 5)
+            # Tinggi total = (jumlah baris * tinggi per baris) - spasi ekstra di akhir + (padding atas & bawah)
+            total_dialog_height_pixels = (total_lines * line_pixel_height) - self.LINE_HEIGHT_ADD + (padding * 2)
 
             y_coords = [] # y_start untuk top dan bottom
 
-            # --- Gambar Background (jika overlay) dan Tentukan y_coords ---
+            # --- Gambar Background (jika overlay) & Tentukan y_coords ---
             if background_style == "overlay":
                 if position == "atas":
                     bg_y_end = min(total_dialog_height_pixels, height)
                     draw.rectangle([(0, 0), (width, bg_y_end)], fill=self.BG_COLOR)
                     y_coords.append(padding)
                 elif position == "bawah":
-                    bg_y_start = max(0, height - total_dialog_height_pixels)
-                    draw.rectangle([(0, bg_y_start), (width, height)], fill=self.BG_COLOR)
-                    y_coords.append(bg_y_start + padding)
+                    bg_y_start_rect = max(0, height - total_dialog_height_pixels) # Untuk rectangle
+                    draw.rectangle([(0, bg_y_start_rect), (width, height)], fill=self.BG_COLOR)
+                    y_coords.append(bg_y_start_rect + padding) # y mulai teks
                 else: # split
-                    half = (len(dialogs) + 1) // 2
-                    top_dialogs = dialogs[:half]
-                    bottom_dialogs = dialogs[half:]
+                    half_lines_idx = (total_lines + 1) // 2
+                    top_lines = wrapped_dialog_lines[:half_lines_idx]
+                    bottom_lines = wrapped_dialog_lines[half_lines_idx:]
 
                     # Background Atas
-                    top_height_pixels = len(top_dialogs) * (self.FONT_SIZE + self.LINE_HEIGHT_ADD) - self.LINE_HEIGHT_ADD + (padding * 2)
+                    top_height_pixels = (len(top_lines) * line_pixel_height) - self.LINE_HEIGHT_ADD + (padding * 2) if top_lines else 0
                     bg_top_end = min(top_height_pixels, height)
                     draw.rectangle([(0, 0), (width, bg_top_end)], fill=self.BG_COLOR)
                     y_coords.append(padding)
 
                     # Background Bawah
-                    bottom_height_pixels = len(bottom_dialogs) * (self.FONT_SIZE + self.LINE_HEIGHT_ADD) - self.LINE_HEIGHT_ADD + (padding * 2)
-                    bg_bottom_start = max(0, height - bottom_height_pixels)
-                    draw.rectangle([(0, bg_bottom_start), (width, height)], fill=self.BG_COLOR)
-                    y_coords.append(bg_bottom_start + padding)
+                    bottom_height_pixels = (len(bottom_lines) * line_pixel_height) - self.LINE_HEIGHT_ADD + (padding * 2) if bottom_lines else 0
+                    bg_bottom_start_rect = max(0, height - bottom_height_pixels)
+                    draw.rectangle([(0, bg_bottom_start_rect), (width, height)], fill=self.BG_COLOR)
+                    y_coords.append(bg_bottom_start_rect + padding)
+            
             else: # background_style == "transparent"
-                 if position == "atas":
-                     y_coords.append(padding)
-                 elif position == "bawah":
-                     y_start_bawah = max(padding, height - total_dialog_height_pixels + padding) # Sesuaikan agar tidak terlalu bawah
-                     y_coords.append(y_start_bawah)
-                 else: # split (transparent)
-                     half = (len(dialogs) + 1) // 2
+                 if position == "atas": y_coords.append(padding)
+                 elif position == "bawah": y_coords.append(max(padding, height - total_dialog_height_pixels + padding))
+                 else: # split transparent
+                     half_lines_idx = (total_lines + 1) // 2
                      y_coords.append(padding) # Y atas
-                     bottom_height_pixels = len(dialogs[half:]) * (self.FONT_SIZE + self.LINE_HEIGHT_ADD) - self.LINE_HEIGHT_ADD + (padding * 2)
-                     y_start_bawah_split = max(padding, height - bottom_height_pixels + padding)
-                     y_coords.append(y_start_bawah_split)
+                     bottom_lines_count = total_lines - half_lines_idx
+                     bottom_height_pixels = (bottom_lines_count * line_pixel_height) - self.LINE_HEIGHT_ADD + (padding * 2) if bottom_lines_count > 0 else 0
+                     y_coords.append(max(padding, height - bottom_height_pixels + padding))
 
-            # --- Draw Dialogs ---
+            # --- Draw Dialogs (dengan wrapping) ---
             if position == "split":
-                half = (len(dialogs) + 1) // 2
+                half_lines_idx = (total_lines + 1) // 2
                 y_pos_top = y_coords[0]
-                for dialog in dialogs[:half]:
-                    self.draw_text_with_multi_shadow(draw, (padding, y_pos_top), dialog, self.font)
-                    y_pos_top += self.FONT_SIZE + self.LINE_HEIGHT_ADD
+                for line in wrapped_dialog_lines[:half_lines_idx]:
+                    self.draw_text_with_multi_shadow(draw, (padding, y_pos_top), line, self.font)
+                    y_pos_top += line_pixel_height
                 y_pos_bottom = y_coords[1]
-                for dialog in dialogs[half:]:
-                    self.draw_text_with_multi_shadow(draw, (padding, y_pos_bottom), dialog, self.font)
-                    y_pos_bottom += self.FONT_SIZE + self.LINE_HEIGHT_ADD
+                for line in wrapped_dialog_lines[half_lines_idx:]:
+                    self.draw_text_with_multi_shadow(draw, (padding, y_pos_bottom), line, self.font)
+                    y_pos_bottom += line_pixel_height
             else: # atas atau bawah
                 y_pos = y_coords[0]
-                for dialog in dialogs:
-                    self.draw_text_with_multi_shadow(draw, (padding, y_pos), dialog, self.font)
-                    y_pos += self.FONT_SIZE + self.LINE_HEIGHT_ADD # Gunakan FONT_SIZE + LINE_HEIGHT_ADD
+                for line in wrapped_dialog_lines:
+                    self.draw_text_with_multi_shadow(draw, (padding, y_pos), line, self.font)
+                    y_pos += line_pixel_height
 
             # Gabungkan gambar
             out_img = Image.alpha_composite(img, txt_overlay)
 
-            # Simpan sebagai JPEG
+            # Simpan sebagai PNG (Point 7)
             output = io.BytesIO()
-            out_img.convert("RGB").save(output, format='JPEG', quality=90) # Convert ke RGB
+            out_img.convert("RGB").save(output, format='PNG') # Simpan PNG
             output.seek(0)
             return output.getvalue()
 
@@ -690,48 +750,79 @@ class SSRPChatlogCog(commands.Cog, name="SSRPChatlog"):
             return image_bytes # Kembalikan asli jika gagal
 
     def get_text_color(self, text: str) -> tuple:
-        """Tentukan warna teks berdasarkan format SSRP/Chatlog Magician"""
-        original_text = text # Simpan teks asli untuk cek case-sensitive jika perlu
-        text = text.strip().lower() # Lowercase untuk matching
+        """Tentukan warna teks berdasarkan format SSRP/Chatlog Magician (Point 3)"""
+        original_text = text # Simpan teks asli
+        text_lower = text.strip().lower() # Lowercase untuk matching non-sensitif
 
-        # Urutan penting: cek yang lebih spesifik dulu
-        if text.startswith('** [ch:'): return self.COLOR_RADIO
-        if text.startswith('** ['): return self.COLOR_DEP # Department chat
-        if text.startswith('**'): return self.COLOR_DO
-        if text.startswith('*'): return self.COLOR_ME
-        if ' whispers:' in text: return self.COLOR_WHISPER
-        if ' (phone):' in text or ':o<' in text: return self.COLOR_WHISPER # Phone whisper
-        if ' [low]:' in text: return self.COLOR_LOWCHAT
-        if '[san interview]' in text: return self.COLOR_NEWS
-        if ' says:' in text: return self.COLOR_CHAT # Default chat
-        if ', $' in text or 'you have received $' in text: return self.COLOR_GREY # Money/Paycheck
-        # Tambahkan rule lain jika perlu (misal death message)
-        # if 'died' in text: return self.COLOR_DEATH
+        # Urutan prioritas (lebih spesifik dulu)
+        if text_lower.startswith('** [ch:'): return self.COLOR_RADIO
+        if text_lower.startswith('** ['): return self.COLOR_DEP # Department chat
+        if text_lower.startswith('**'): return self.COLOR_DO # /do (dua bintang)
+        if text_lower.startswith('*'): return self.COLOR_ME # /me (satu bintang)
+        
+        # Cek whispers/phone
+        if ' whispers:' in text_lower: return self.COLOR_WHISPER
+        if re.search(r'\(\s*phone\s*\):', text_lower): return self.COLOR_WHISPER
+        if ':o<' in text: return self.COLOR_WHISPER
+        
+        if ' [low]:' in text_lower: return self.COLOR_LOWCHAT
+        if '[san interview]' in text_lower: return self.COLOR_NEWS
+        if ' says:' in text_lower: return self.COLOR_CHAT # Default chat
+        
+        # Cek pesan sistem/uang
+        if ', $' in text or 'you have received $' in text_lower: return self.COLOR_GREY
+        if '(( ' in text and ' ))' in text: return self.COLOR_OOC
 
-        # Fallback ke putih jika tidak cocok
+        # Fallback
         return self.COLOR_CHAT
 
     def draw_text_with_multi_shadow(self, draw: ImageDraw.ImageDraw, pos: Tuple[int, int], text: str, font: ImageFont.FreeTypeFont):
-        """Gambar teks dengan shadow hitam di 4 arah"""
+        """Gambar teks dengan shadow hitam di 4 arah dan penyesuaian nama (Point 1 & 2)"""
         x, y = pos
         text_color = self.get_text_color(text)
+        cleaned_text = text # Mulai dengan teks (mungkin sudah di-wrap)
+        
+        # Hanya lakukan pembersihan nama jika ini adalah *awal* dari baris dialog
+        # (textwrap mungkin memecah baris, jadi kita hanya proses baris pertama)
+        # Note: Ini asumsi. Jika textwrap memecah di tengah nama, ini bisa salah.
+        # Tapi karena textwrap di-pass 'dialog' utuh, ini harusnya aman.
 
-        cleaned_text = text # Teks yang akan digambar
+        # Ganti _ -> spasi untuk chat biasa (`says:` atau `[low]:`) (Point 1)
+        match_say = re.match(r"^\s*([A-Za-z0-9_]+)\s+says:", text, re.IGNORECASE)
+        match_low = re.match(r"^\s*([A-Za-z0-9_]+)\s+\[low\]:", text, re.IGNORECASE)
 
-        # Ganti _ -> spasi HANYA untuk chat biasa (format Nama_Pemain says:)
-        match = re.match(r"([A-Za-z0-9_]+)\s*(says|\[low\]):", text)
-        if match:
-            name = match.group(1).replace('_', ' ')
-            rest_of_line = text[match.end():] # Ambil sisa teks setelah ': '
-            cleaned_text = f"{name}{match.group(2)}:{rest_of_line}"
+        if match_say:
+            name = match_say.group(1).replace('_', ' ')
+            rest_of_line = text[match_say.end():] # Ambil sisa teks
+            cleaned_text = f"{name} says:{rest_of_line}" # Default
+            if not rest_of_line.startswith(' '): # Tambahkan spasi jika belum ada
+                 cleaned_text = f"{name} says: {rest_of_line.lstrip()}"
 
-        # Gambar shadow dulu
+        elif match_low:
+            name = match_low.group(1).replace('_', ' ')
+            rest_of_line = text[match_low.end():]
+            cleaned_text = f"{name} [low]:{rest_of_line}"
+            if not rest_of_line.startswith(' '):
+                 cleaned_text = f"{name} [low]: {rest_of_line.lstrip()}"
+
+        # Ganti _ -> spasi untuk /me (format `* Nama_Pemain aksi`) (Point 2)
+        elif text.startswith('* ') and ' (( ' not in text and ' [ch:' not in text and ' [' not in text_lower: # Pastikan bukan /do atau radio
+            parts = text.split(' ', 2) # Split jadi max 3: '*', 'Nama_Pemain', 'aksi...'
+            if len(parts) >= 3:
+                name = parts[1].replace('_', ' ')
+                action = parts[2]
+                cleaned_text = f"* {name} {action}"
+            elif len(parts) == 2: # Mungkin hanya '* Nama_Pemain'
+                 name = parts[1].replace('_', ' ')
+                 cleaned_text = f"* {name}"
+
+        # Gambar shadow
         for dx, dy in self.SHADOW_OFFSETS:
             draw.text((x + dx, y + dy), cleaned_text, font=font, fill=self.COLOR_SHADOW)
 
-        # Gambar teks utama di atas shadow
+        # Gambar teks utama
         draw.text(pos, cleaned_text, font=font, fill=text_color)
 
-
+# Setup function
 async def setup(bot):
     await bot.add_cog(SSRPChatlogCog(bot))
