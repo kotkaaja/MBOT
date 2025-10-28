@@ -109,7 +109,7 @@ class DialogSettingsView(ui.View):
         self.info_data = info_data
         self.dialog_counts = [5] * len(images)
         self.positions = ["bawah"] * len(images)
-        # --- PERBAIKAN: Ubah default ke transparent ---
+        # --- Default ke transparent ---
         self.background_styles = ["transparent"] * len(images) # Default transparent
         self.current_image_index = 0
 
@@ -258,7 +258,6 @@ class SSRPChatlogCog(commands.Cog, name="SSRPChatlog"):
         self.config = bot.config # Akses config dari bot
 
         # --- Setup API Clients & Key Cyclers ---
-        self.openai_client = None # Tidak dipakai lagi, diganti per-request
         self.openai_key_cycler = None
         if hasattr(self.config, 'OPENAI_API_KEYS') and self.config.OPENAI_API_KEYS:
             self.openai_key_cycler = itertools.cycle(self.config.OPENAI_API_KEYS)
@@ -517,6 +516,7 @@ class SSRPChatlogCog(commands.Cog, name="SSRPChatlog"):
                 await interaction.channel.send(embed=embed_result, files=files)
 
         except Exception as e:
+            # Ini adalah blok catch yang menangani error dari 'generate_dialogs_with_ai'
             logger.error(f"Error saat proses SSRP: {e}", exc_info=True)
             error_message = f"❌ Terjadi kesalahan: {str(e)[:1500]}"
             if processing_msg:
@@ -552,19 +552,17 @@ class SSRPChatlogCog(commands.Cog, name="SSRPChatlog"):
                  raise ValueError("Format JSON dari OpenAI tidak valid (bukan list).")
             return result
         except Exception as e:
-            logger.warning(f"OpenAI gagal: {e}")
+            # Log error spesifik
+            logger.warning(f"SPOILER: OpenAI Gagal: {e}")
             if "rate_limit_exceeded" in str(e).lower() or "429" in str(e):
                  # Umpan balik spesifik untuk rate limit
                  raise Exception(f"OpenAI Rate Limit. Mencoba AI lain...") from e
-            return None # Gagal karena alasan lain
+            raise e # Lemparkan error lagi agar ditangkap oleh generate_dialogs_with_ai
 
     async def _generate_with_deepseek(self, api_key: str, prompt: str, image_content: Optional[Dict]) -> Optional[List[List[str]]]:
         """Coba generate dialog dengan DeepSeek (Note: DeepSeek mungkin tidak support gambar)"""
-        # DeepSeek Chat API mungkin tidak secara langsung support gambar dalam format OpenAI
-        # Kita hanya kirim prompt teksnya saja.
         try:
-            async with httpx.AsyncClient(timeout=45.0) as client: # Timeout lebih lama
-                # Buat payload hanya teks
+            async with httpx.AsyncClient(timeout=45.0) as client:
                 payload = {
                     "model": "deepseek-chat",
                     "messages": [{"role": "user", "content": prompt}], # Hanya teks
@@ -580,11 +578,9 @@ class SSRPChatlogCog(commands.Cog, name="SSRPChatlog"):
                 )
                 response.raise_for_status() # Error jika status 4xx atau 5xx
                 
-                # Ekstrak konten teks, lalu parse JSON
                 response_json = response.json()
                 response_content = response_json["choices"][0]["message"]["content"]
                 
-                # DeepSeek kadang membungkus JSON dalam markdown, bersihkan
                 cleaned_response = re.sub(r'```json\s*|\s*```', '', response_content.strip(), flags=re.DOTALL)
                 
                 data = json.loads(cleaned_response)
@@ -593,25 +589,23 @@ class SSRPChatlogCog(commands.Cog, name="SSRPChatlog"):
                      raise ValueError("Format JSON dari DeepSeek tidak valid (bukan list).")
                 return result
         except Exception as e:
-            logger.warning(f"DeepSeek gagal: {e}")
-            return None
+            # Log error spesifik
+            logger.warning(f"SPOILER: DeepSeek Gagal: {e}")
+            raise e # Lemparkan error lagi
 
     async def _generate_with_gemini(self, api_key: str, prompt: str, image_content: Optional[Dict]) -> Optional[List[List[str]]]:
         """Coba generate dialog dengan Gemini"""
         try:
             genai.configure(api_key=api_key)
-            model = genai.GenerativeModel('gemini-1.5-flash') # Gunakan model yang support vision & JSON
+            model = genai.GenerativeModel('gemini-1.5-flash')
 
             gemini_content = [prompt] # Selalu mulai dengan prompt
 
-            # Konversi format gambar OpenAI ke Gemini
             if image_content and image_content['type'] == 'image_url':
                  img_url_data = image_content['image_url']['url']
                  if img_url_data.startswith('data:image/'):
-                     # Ekstrak base64 data
                      mime_type, base64_data = img_url_data.split(';base64,')
                      mime_type = mime_type.split(':')[1]
-                     # Buat Image object dari bytes
                      img_bytes = base64.b64decode(base64_data)
                      img_part = Image.open(io.BytesIO(img_bytes))
                      gemini_content.append(img_part) # Tambahkan objek gambar PIL
@@ -621,19 +615,18 @@ class SSRPChatlogCog(commands.Cog, name="SSRPChatlog"):
             response = await model.generate_content_async(
                 gemini_content,
                 generation_config=genai.types.GenerationConfig(
-                    response_mime_type="application/json", # Minta JSON
+                    response_mime_type="application/json",
                     temperature=0.7
                 ),
-                request_options={"timeout": 60} # Timeout 60 detik
+                request_options={"timeout": 60}
             )
 
-            # Cek safety ratings
             if response.prompt_feedback.block_reason:
                 raise Exception(f"Gemini diblokir: {response.prompt_feedback.block_reason.name}")
             if response.candidates and response.candidates[0].finish_reason.name != "STOP":
+                # Jika finish reason bukan STOP (misal: SAFETY, RECITATION, MAX_TOKENS)
                 raise Exception(f"Gemini finish reason: {response.candidates[0].finish_reason.name}")
 
-            # Bersihkan markdown dari respons JSON
             cleaned_response = re.sub(r'```json\s*|\s*```', '', response.text.strip(), flags=re.DOTALL)
             if not cleaned_response:
                  raise ValueError("Respons JSON dari Gemini kosong setelah dibersihkan.")
@@ -644,8 +637,9 @@ class SSRPChatlogCog(commands.Cog, name="SSRPChatlog"):
                  raise ValueError("Format JSON dari Gemini tidak valid (bukan list).")
             return result
         except Exception as e:
-            logger.warning(f"Gemini gagal: {e}")
-            return None
+            # Log error spesifik
+            logger.warning(f"SPOILER: Gemini Gagal: {e}")
+            raise e # Lemparkan error lagi
 
     async def generate_dialogs_with_ai(
         self,
@@ -670,7 +664,7 @@ class SSRPChatlogCog(commands.Cog, name="SSRPChatlog"):
             char_names_raw = [line.split('(')[0].strip() for line in char_details.split('\n') if line.strip()]; char_names_raw = [re.sub(r"[^A-Za-z\s]+", "", name).strip() for name in char_names_raw if name]
         char_names_formatted = [name.replace(' ', '_') for name in char_names_raw if name]
 
-        # Prompt ringkas untuk menghemat token
+        # Prompt ringkas
         prompt = f"""
         Anda adalah penulis dialog SSRP server SAMP ahli.
         Konteks: Karakter={info_data.get('detail_karakter', 'N/A')} (AI: {', '.join(char_names_formatted)}), Skenario={info_data.get('skenario', 'N/A')}, Bahasa={language}, Jml Gbr={len(images_bytes_list)}
@@ -700,8 +694,9 @@ class SSRPChatlogCog(commands.Cog, name="SSRPChatlog"):
                 dialogs_list = await self._generate_with_openai(key, prompt, image_content_openai)
                 if dialogs_list: ai_used = "OpenAI"
             except Exception as e:
-                 logger.warning(f"OpenAI error: {e}")
-                 await processing_msg.edit(content=f"⚠️ {user_mention}, OpenAI gagal ({e})... Mencoba AI lain...")
+                 # PENAMBAHAN LOGGING ERROR
+                 logger.error(f"====== SSRP: OPENAI GAGAL: {e} ======") 
+                 await processing_msg.edit(content=f"⚠️ {user_mention}, OpenAI gagal... Mencoba AI lain...")
                  await asyncio.sleep(1)
 
         # --- Coba DeepSeek (jika OpenAI gagal) ---
@@ -712,7 +707,8 @@ class SSRPChatlogCog(commands.Cog, name="SSRPChatlog"):
                 dialogs_list = await self._generate_with_deepseek(key, prompt, None) # Pass None for image
                 if dialogs_list: ai_used = "DeepSeek"
             except Exception as e:
-                 logger.warning(f"DeepSeek error: {e}")
+                 # PENAMBAHAN LOGGING ERROR
+                 logger.error(f"====== SSRP: DEEPSEEK GAGAL: {e} ======")
                  await processing_msg.edit(content=f"⚠️ {user_mention}, DeepSeek gagal... Mencoba AI lain...")
                  await asyncio.sleep(1)
 
@@ -724,13 +720,15 @@ class SSRPChatlogCog(commands.Cog, name="SSRPChatlog"):
                 dialogs_list = await self._generate_with_gemini(key, prompt, image_content_openai) # Kirim gambar ke Gemini
                 if dialogs_list: ai_used = "Gemini"
             except Exception as e:
-                 logger.warning(f"Gemini error: {e}")
+                 # PENAMBAHAN LOGGING ERROR
+                 logger.error(f"====== SSRP: GEMINI GAGAL: {e} ======")
                  await processing_msg.edit(content=f"⚠️ {user_mention}, Gemini gagal...")
                  await asyncio.sleep(1)
 
         # --- Jika semua gagal ---
         if not dialogs_list:
-            logger.error("Semua API AI gagal untuk SSRP Chatlog.")
+            logger.error("Semua API AI gagal untuk SSRP Chatlog setelah fallback.")
+            # Ini adalah error yang Anda lihat
             raise Exception("Semua layanan AI (OpenAI, DeepSeek, Gemini) gagal dihubungi atau error.")
 
         # Padding/Truncating
@@ -775,10 +773,7 @@ class SSRPChatlogCog(commands.Cog, name="SSRPChatlog"):
 
                 final_lines = []
                 for line in lines:
-                    # Cek ulang jika satu baris masih terlalu panjang
                     if self.font.getlength(line) > max_text_width_px:
-                        # Potong paksa jika masih kepanjangan (jarang terjadi)
-                        # Hitung ulang char per line yang lebih aman
                         safe_chars = max(10, approx_chars_per_line - 10)
                         for i in range(0, len(line), safe_chars):
                             final_lines.append(line[i:i + safe_chars])
@@ -792,7 +787,7 @@ class SSRPChatlogCog(commands.Cog, name="SSRPChatlog"):
             line_pixel_height = self.FONT_SIZE + self.LINE_HEIGHT_ADD
             total_dialog_height_pixels = (total_lines * line_pixel_height) - self.LINE_HEIGHT_ADD + (padding * 2)
 
-            y_coords = [] # y_start untuk top dan bottom
+            y_coords = []
 
             # --- Gambar Background (jika overlay) & Tentukan y_coords ---
             if background_style == "overlay":
