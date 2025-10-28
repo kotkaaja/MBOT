@@ -940,49 +940,23 @@ PENTING:
         position: str,
         background_style: str
     ) -> bytes:
-        """Tambahkan dialog ke gambar dengan styling SEMPURNA & word wrap ketat"""
+        """Tambahkan dialog ke gambar dengan styling SEMPURNA & TANPA word wrap"""
         try:
             img = Image.open(io.BytesIO(image_bytes)).convert("RGBA")
             width, height = img.size
             txt_overlay = Image.new('RGBA', img.size, (255, 255, 255, 0))
             draw = ImageDraw.Draw(txt_overlay)
             padding = 10
-            max_text_width_px = width - (padding * 2)
+            # max_text_width_px = width - (padding * 2) # Tidak digunakan lagi
 
             wrapped_dialog_lines = []
             
-            # Text Wrapping yang lebih ketat
+            # --- PERUBAHAN DI SINI ---
+            # Menghapus semua logika textwrap agar 1 dialog = 1 baris,
+            # sesuai permintaan Anda.
             for dialog in dialogs:
-                # Hitung lebar karakter rata-rata
-                avg_char_width = self.font.getlength("W")  # Gunakan huruf lebar
-                approx_chars_per_line = int(max_text_width_px / avg_char_width) if avg_char_width > 0 else 60
-                
-                # Wrap dengan batas karakter yang lebih konservatif
-                lines = textwrap.wrap(
-                    dialog, 
-                    width=max(10, approx_chars_per_line - 8),  # Lebih konservatif
-                    break_long_words=True,
-                    replace_whitespace=False,
-                    drop_whitespace=False
-                )
-                
-                if not lines:
-                    lines = [dialog]
-
-                # Validasi lebar setiap line
-                final_lines = []
-                for line in lines:
-                    actual_width = self.font.getlength(line)
-                    if actual_width > max_text_width_px:
-                        # Paksa pecah jika masih terlalu lebar
-                        safe_chars = max(10, int(len(line) * (max_text_width_px / actual_width)) - 5)
-                        for i in range(0, len(line), safe_chars):
-                            chunk = line[i:i + safe_chars]
-                            final_lines.append(chunk)
-                    else:
-                        final_lines.append(line)
-                
-                wrapped_dialog_lines.extend(final_lines)
+                wrapped_dialog_lines.append(dialog)
+            # --- AKHIR PERUBAHAN ---
 
             # Hitung Tinggi & Posisi Y
             total_lines = len(wrapped_dialog_lines)
