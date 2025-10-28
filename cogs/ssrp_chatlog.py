@@ -7,7 +7,7 @@ import io
 import base64
 from PIL import Image, ImageDraw, ImageFont, ImageOps
 from openai import AsyncOpenAI # Untuk OpenAI
-import httpx # Untuk DeepSeek
+import httpx # Untuk DeepSeek & OpenRouter
 import google.generativeai as genai # Untuk Gemini
 from typing import List, Dict, Optional, Tuple
 import asyncio
@@ -278,6 +278,20 @@ class SSRPChatlogCog(commands.Cog, name="SSRPChatlog"):
             logger.info(f"✅ Gemini keys ({len(self.config.GEMINI_API_KEYS)}) dimuat untuk SSRP Chatlog.")
         else:
             logger.warning("⚠️ Gemini API keys (GEMINI_API_KEYS) tidak ditemukan di config.")
+
+        # --- [BARU] Setup OpenRouter ---
+        self.openrouter_key_cycler = None
+        if hasattr(self.config, 'OPENROUTER_API_KEY') and self.config.OPENROUTER_API_KEY:
+            # Menggunakan list agar itertools.cycle berfungsi
+            self.openrouter_key_cycler = itertools.cycle([self.config.OPENROUTER_API_KEY]) 
+            # Siapkan header kustom dari config
+            self.openrouter_headers = {
+                "HTTP-Referer": getattr(self.config, 'OPENROUTER_SITE_URL', 'http://localhost'),
+                "X-Title": getattr(self.config, 'OPENROUTER_SITE_NAME', 'MBOT'),
+            }
+            logger.info(f"✅ OpenRouter key dimuat untuk SSRP Chatlog.")
+        else:
+            logger.warning("⚠️ OpenRouter API key (OPENROUTER_API_KEY) tidak ditemukan di config.")
         # --- End Setup API ---
 
 
@@ -358,8 +372,8 @@ class SSRPChatlogCog(commands.Cog, name="SSRPChatlog"):
     async def create_ssrp(self, ctx: commands.Context):
         """Buat SSRP Chatlog dari gambar dengan AI (gaya Chatlog Magician)"""
 
-        # Cek ketersediaan AI
-        if not self.openai_key_cycler and not self.deepseek_key_cycler and not self.gemini_key_cycler:
+        # --- [PERBAIKAN] Cek ketersediaan AI (termasuk OpenRouter) ---
+        if not self.openai_key_cycler and not self.deepseek_key_cycler and not self.gemini_key_cycler and not self.openrouter_key_cycler:
             await ctx.send("❌ Fitur SSRP Chatlog tidak tersedia (Tidak ada API Key AI yang dikonfigurasi)")
             return
 
@@ -449,7 +463,7 @@ class SSRPChatlogCog(commands.Cog, name="SSRPChatlog"):
 
             language = info_data.get('language', 'Bahasa Indonesia baku')
 
-            # --- Panggil Fungsi AI dengan Fallback ---
+            # --- [PERBAIKAN] Panggil Fungsi AI dengan Fallback Baru ---
             all_dialogs_raw, ai_used = await self.generate_dialogs_with_ai(
                 images_bytes_list, info_data, dialog_counts, language, 
                 processing_msg, interaction.user.mention
@@ -597,7 +611,8 @@ class SSRPChatlogCog(commands.Cog, name="SSRPChatlog"):
         """Coba generate dialog dengan Gemini"""
         try:
             genai.configure(api_key=api_key)
-            model = genai.GenerativeModel('gemini-1.5-flash')
+            # --- [PERBAIKAN] Ganti nama model ke 'latest' untuk menghindari 404 ---
+            model = genai.GenerativeModel('gemini-1.5-flash-latest')
 
             gemini_content = [prompt] # Selalu mulai dengan prompt
 
@@ -641,6 +656,60 @@ class SSRPChatlogCog(commands.Cog, name="SSRPChatlog"):
             logger.warning(f"SPOILER: Gemini Gagal: {e}")
             raise e # Lemparkan error lagi
 
+    # --- [BARU] Fungsi untuk OpenRouter ---
+    async def _generate_with_openrouter(self, api_key: str, prompt: str, image_content: Optional[Dict]) -> Optional[List[List[str]]]:
+        """Coba generate dialog dengan OpenRouter"""
+        if not image_content or image_content['type'] != 'image_url':
+            raise ValueError("OpenRouter memerlukan konten gambar (base64) untuk model vision.")
+        
+        image_url_data = image_content['image_url']['url'] # Format: "data:image/jpeg;base64,..."
+
+        try:
+            async with httpx.AsyncClient(timeout=60.0) as client:
+                payload = {
+                    "model": "nvidia/nemotron-nano-12b-v2-vl:free", # Model vision gratis dari OpenRouter
+                    "messages": [
+                        {
+                            "role": "user",
+                            "content": [
+                                {"type": "text", "text": prompt},
+                                {"type": "image_url", "image_url": {"url": image_url_data}}
+                            ]
+                        }
+                    ],
+                    "response_format": {"type": "json_object"},
+                    "temperature": 0.7,
+                    "max_tokens": 3000
+                }
+                
+                # Gabungkan headers kustom (Referer/Title)
+                headers = {"Authorization": f"Bearer {api_key}"}
+                if hasattr(self, 'openrouter_headers'):
+                    headers.update(self.openrouter_headers)
+
+                response = await client.post(
+                    "https://openrouter.ai/api/v1/chat/completions",
+                    json=payload,
+                    headers=headers
+                )
+                response.raise_for_status()
+                
+                response_json = response.json()
+                response_content = response_json["choices"][0]["message"]["content"]
+                
+                # Pembersihan ringan jika JSON terbungkus markdown
+                cleaned_response = re.sub(r'```json\s*|\s*```', '', response_content.strip(), flags=re.DOTALL)
+                
+                data = json.loads(cleaned_response)
+                result = data.get("dialogs_per_image")
+                if not result or not isinstance(result, list):
+                    raise ValueError("Format JSON dari OpenRouter tidak valid (bukan list).")
+                return result
+        except Exception as e:
+            logger.warning(f"SPOILER: OpenRouter Gagal: {e}")
+            raise e # Lemparkan error lagi
+
+    # --- [PERBAIKAN] Logika Fallback AI ---
     async def generate_dialogs_with_ai(
         self,
         images_bytes_list: List[bytes],
@@ -650,7 +719,7 @@ class SSRPChatlogCog(commands.Cog, name="SSRPChatlog"):
         processing_msg: discord.Message, # Untuk update status
         user_mention: str # Untuk update status
     ) -> Tuple[List[List[str]], str]:
-        """Generate dialog SSRP SAMP dengan fallback AI"""
+        """Generate dialog SSRP SAMP dengan fallback AI (Prioritas OpenRouter)"""
 
         # --- Setup prompt dan image content (hanya gambar pertama) ---
         base64_img = base64.b64encode(images_bytes_list[0]).decode('utf-8')
@@ -658,6 +727,7 @@ class SSRPChatlogCog(commands.Cog, name="SSRPChatlog"):
             "type": "image_url",
             "image_url": {"url": f"data:image/jpeg;base64,{base64_img}"}
         }
+        
         dialog_requirements = "\n".join([f"Gambar {i+1}: HARUS berisi TEPAT {count} baris dialog." for i, count in enumerate(dialog_counts)])
         char_details = info_data.get('detail_karakter', ''); char_names_raw = re.findall(r"([A-Za-z'_]+(?: [A-Za-z'_]+)?)", char_details)
         if not char_names_raw:
@@ -686,50 +756,60 @@ class SSRPChatlogCog(commands.Cog, name="SSRPChatlog"):
         dialogs_list = None
         ai_used = "Tidak ada"
 
-        # --- Coba OpenAI ---
-        if self.openai_key_cycler:
+        # --- Coba OpenRouter (Prioritas 1) ---
+        if self.openrouter_key_cycler:
+            try:
+                await processing_msg.edit(content=f"🧠 {user_mention}, Mencoba OpenRouter (Prioritas)...")
+                key = next(self.openrouter_key_cycler)
+                dialogs_list = await self._generate_with_openrouter(key, prompt, image_content_openai)
+                if dialogs_list: ai_used = "OpenRouter"
+            except Exception as e:
+                 logger.error(f"====== SSRP: OPENROUTER GAGAL: {e} ======") 
+                 await processing_msg.edit(content=f"⚠️ {user_mention}, OpenRouter (Prioritas) gagal... Mencoba OpenAI...")
+                 await asyncio.sleep(1)
+
+        # --- Coba OpenAI (Fallback 1) ---
+        if not dialogs_list and self.openai_key_cycler:
             try:
                 await processing_msg.edit(content=f"🧠 {user_mention}, Mencoba OpenAI...")
                 key = next(self.openai_key_cycler)
                 dialogs_list = await self._generate_with_openai(key, prompt, image_content_openai)
                 if dialogs_list: ai_used = "OpenAI"
             except Exception as e:
-                 # PENAMBAHAN LOGGING ERROR
                  logger.error(f"====== SSRP: OPENAI GAGAL: {e} ======") 
-                 await processing_msg.edit(content=f"⚠️ {user_mention}, OpenAI gagal... Mencoba AI lain...")
+                 await processing_msg.edit(content=f"⚠️ {user_mention}, OpenAI gagal... Mencoba Gemini...")
                  await asyncio.sleep(1)
 
-        # --- Coba DeepSeek (jika OpenAI gagal) ---
-        if not dialogs_list and self.deepseek_key_cycler:
-            try:
-                await processing_msg.edit(content=f"🧠 {user_mention}, Mencoba DeepSeek (Hanya Teks)...")
-                key = next(self.deepseek_key_cycler)
-                dialogs_list = await self._generate_with_deepseek(key, prompt, None) # Pass None for image
-                if dialogs_list: ai_used = "DeepSeek"
-            except Exception as e:
-                 # PENAMBAHAN LOGGING ERROR
-                 logger.error(f"====== SSRP: DEEPSEEK GAGAL: {e} ======")
-                 await processing_msg.edit(content=f"⚠️ {user_mention}, DeepSeek gagal... Mencoba AI lain...")
-                 await asyncio.sleep(1)
-
-        # --- Coba Gemini (jika DeepSeek gagal) ---
+        # --- Coba Gemini (Fallback 2) ---
         if not dialogs_list and self.gemini_key_cycler:
             try:
                 await processing_msg.edit(content=f"🧠 {user_mention}, Mencoba Gemini...")
                 key = next(self.gemini_key_cycler)
-                dialogs_list = await self._generate_with_gemini(key, prompt, image_content_openai) # Kirim gambar ke Gemini
+                dialogs_list = await self._generate_with_gemini(key, prompt, image_content_openai)
                 if dialogs_list: ai_used = "Gemini"
             except Exception as e:
-                 # PENAMBAHAN LOGGING ERROR
                  logger.error(f"====== SSRP: GEMINI GAGAL: {e} ======")
-                 await processing_msg.edit(content=f"⚠️ {user_mention}, Gemini gagal...")
+                 await processing_msg.edit(content=f"⚠️ {user_mention}, Gemini gagal... Mencoba DeepSeek...")
+                 await asyncio.sleep(1)
+        
+        # --- Coba DeepSeek (Fallback 3 - Text Only) ---
+        # Ini adalah fallback terakhir jika semua model vision gagal.
+        if not dialogs_list and self.deepseek_key_cycler:
+            try:
+                await processing_msg.edit(content=f"🧠 {user_mention}, Mencoba DeepSeek (Hanya Teks)...")
+                key = next(self.deepseek_key_cycler)
+                # Kirim prompt tanpa gambar (None)
+                dialogs_list = await self._generate_with_deepseek(key, prompt, None) 
+                if dialogs_list: ai_used = "DeepSeek (Text-Only)"
+            except Exception as e:
+                 logger.error(f"====== SSRP: DEEPSEEK GAGAL: {e} ======")
+                 await processing_msg.edit(content=f"⚠️ {user_mention}, DeepSeek gagal...")
                  await asyncio.sleep(1)
 
         # --- Jika semua gagal ---
         if not dialogs_list:
             logger.error("Semua API AI gagal untuk SSRP Chatlog setelah fallback.")
-            # Ini adalah error yang Anda lihat
-            raise Exception("Semua layanan AI (OpenAI, DeepSeek, Gemini) gagal dihubungi atau error.")
+            raise Exception("Semua layanan AI (OpenRouter, OpenAI, Gemini, DeepSeek) gagal dihubungi atau error.")
 
         # Padding/Truncating
         while len(dialogs_list) < len(images_bytes_list):
