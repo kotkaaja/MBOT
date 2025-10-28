@@ -573,15 +573,15 @@ class SSRPChatlogCog(commands.Cog, name="SSRPChatlog"):
 
     # ===== FUNGSI AI DENGAN PROMPT DIPERBAIKI =====
     
-    async def _generate_with_openai(self, api_key: str, prompt: str, image_content: Dict) -> Optional[List[List[str]]]:
-        """Coba generate dialog dengan OpenAI"""
+    async def _generate_with_openai(self, api_key: str, prompt: str, image_content: Optional[Dict]) -> Optional[List[List[str]]]:
+        """Coba generate dialog dengan OpenAI (Hanya Teks)"""
         try:
             client = AsyncOpenAI(api_key=api_key, timeout=30.0)
             response = await client.chat.completions.create(
                 model="gpt-4o-mini",
                 messages=[
                     {"role": "system", "content": "Anda adalah penulis SSRP ahli. Output HANYA JSON."},
-                    {"role": "user", "content": [{"type": "text", "text": prompt}, image_content]}
+                    {"role": "user", "content": prompt} # --- PERBAIKAN: Hanya kirim teks prompt
                 ],
                 response_format={"type": "json_object"}, 
                 max_tokens=3000, 
@@ -600,8 +600,8 @@ class SSRPChatlogCog(commands.Cog, name="SSRPChatlog"):
                  raise Exception(f"OpenAI Rate Limit. Mencoba AI lain...") from e
             raise e
 
-    async def _generate_with_agentrouter(self, api_key: str, prompt: str, image_content: Dict) -> Optional[List[List[str]]]:
-        """Coba generate dialog dengan Agent Router (OpenAI Compatible)"""
+    async def _generate_with_agentrouter(self, api_key: str, prompt: str, image_content: Optional[Dict]) -> Optional[List[List[str]]]:
+        """Coba generate dialog dengan Agent Router (Hanya Teks)"""
         try:
             client = AsyncOpenAI(
                 api_key=api_key,
@@ -612,7 +612,7 @@ class SSRPChatlogCog(commands.Cog, name="SSRPChatlog"):
                 model="gpt-4o-mini",
                 messages=[
                     {"role": "system", "content": "Anda adalah penulis SSRP ahli. Output HANYA JSON."},
-                    {"role": "user", "content": [{"type": "text", "text": prompt}, image_content]}
+                    {"role": "user", "content": prompt} # --- PERBAIKAN: Hanya kirim teks prompt
                 ],
                 response_format={"type": "json_object"}, 
                 max_tokens=3000, 
@@ -663,23 +663,14 @@ class SSRPChatlogCog(commands.Cog, name="SSRPChatlog"):
             raise e
 
     async def _generate_with_gemini(self, api_key: str, prompt: str, image_content: Optional[Dict]) -> Optional[List[List[str]]]:
-        """Coba generate dialog dengan Gemini"""
+        """Coba generate dialog dengan Gemini (Hanya Teks)"""
         try:
             genai.configure(api_key=api_key)
             model = genai.GenerativeModel('gemini-1.5-flash-latest')
 
+            # --- PERBAIKAN: Hanya kirim teks prompt
             gemini_content = [prompt] 
-
-            if image_content and image_content['type'] == 'image_url':
-                 img_url_data = image_content['image_url']['url']
-                 if img_url_data.startswith('data:image/'):
-                     mime_type, base64_data = img_url_data.split(';base64,')
-                     mime_type = mime_type.split(':')[1]
-                     img_bytes = base64.b64decode(base64_data)
-                     img_part = Image.open(io.BytesIO(img_bytes))
-                     gemini_content.append(img_part)
-                 else:
-                     logger.warning("Format image_content tidak didukung untuk Gemini (bukan base64).")
+            # --- BLOK IMAGE DIHAPUS ---
             
             response = await model.generate_content_async(
                 gemini_content,
@@ -709,29 +700,25 @@ class SSRPChatlogCog(commands.Cog, name="SSRPChatlog"):
             raise e
 
     async def _generate_with_openrouter(self, api_key: str, prompt: str, image_content: Optional[Dict]) -> Optional[List[List[str]]]:
-        """Coba generate dialog dengan OpenRouter (Vision)"""
-        if not image_content or image_content['type'] != 'image_url':
-            raise ValueError("OpenRouter memerlukan konten gambar (base64) untuk model vision.")
+        """Coba generate dialog dengan OpenRouter (Hanya Teks)"""
+        # --- PERBAIKAN: Hapus cek image content
         
-        image_url_data = image_content['image_url']['url']
-
         try:
             async with httpx.AsyncClient(timeout=60.0) as client:
+                # --- PERBAIKAN: Model Teks dan Payload Teks ---
                 payload = {
-                    "model": "nvidia/nemotron-nano-12b-v2-vl:free",
+                    "model": "mistralai/mistral-7b-instruct:free", # Model Teks Gratis
                     "messages": [
                         {
                             "role": "user",
-                            "content": [
-                                {"type": "text", "text": prompt},
-                                {"type": "image_url", "image_url": {"url": image_url_data}}
-                            ]
+                            "content": prompt # Hanya Teks
                         }
                     ],
                     "response_format": {"type": "json_object"},
                     "temperature": 0.7,
                     "max_tokens": 3000
                 }
+                # --- AKHIR PERBAIKAN PAYLOAD ---
                 
                 headers = {"Authorization": f"Bearer {api_key}"}
                 if hasattr(self, 'openrouter_headers'):
@@ -768,13 +755,12 @@ class SSRPChatlogCog(commands.Cog, name="SSRPChatlog"):
         processing_msg: discord.Message, 
         user_mention: str
     ) -> Tuple[List[List[str]], str]:
-        """Generate dialog SSRP SAMP dengan fallback AI - PROMPT DIPERBAIKI"""
+        """Generate dialog SSRP SAMP dengan fallback AI - HANYA TEKS - PROMPT DIPERBAIKI"""
 
-        base64_img = base64.b64encode(images_bytes_list[0]).decode('utf-8')
-        image_content_openai = {
-            "type": "image_url",
-            "image_url": {"url": f"data:image/jpeg;base64,{base64_img}"}
-        }
+        # --- PERBAIKAN: Hapus semua pemrosesan gambar (base64) ---
+        # base64_img = base64.b64encode(images_bytes_list[0]).decode('utf-8')
+        # image_content_openai = { ... }
+        # --- AKHIR PERBAIKAN ---
         
         dialog_requirements = "\n".join([f"Gambar {i+1}: HARUS berisi TEPAT {count} baris dialog." for i, count in enumerate(dialog_counts)])
         char_details = info_data.get('detail_karakter', '')
@@ -787,13 +773,14 @@ class SSRPChatlogCog(commands.Cog, name="SSRPChatlog"):
         # ===== PROMPT YANG SANGAT KETAT (DIPERBAIKI) =====
         prompt = f"""
 Anda adalah penulis dialog SSRP server SAMP profesional. PATUHI ATURAN INI:
+Anda HANYA boleh menggunakan TEKS di bawah ini. JANGAN gunakan gambar.
 
-KONTEKS:
+KONTEKS (HANYA TEKS):
 - Karakter: {info_data.get('detail_karakter', 'N/A')}
 - Nama AI (TANPA underscore): {', '.join(char_names_formatted)}
 - Skenario: {info_data.get('skenario', 'N/A')}
 - Bahasa: {language}
-- Jumlah Gambar: {len(images_bytes_list)}
+- Jumlah Gambar (untuk pembagian dialog): {len(images_bytes_list)}
 
 KEBUTUHAN BARIS PER GAMBAR:
 {dialog_requirements}
@@ -826,15 +813,12 @@ ATURAN FORMAT KETAT ({language}):
    - Maksimal 50 kata
    - Contoh: `** Angin sepoi-sepoi menerpa wajahnya dengan lembut (( Jane Smith ))`
 
-5. **WHISPER** - Format: `Nama Karakter whispers: Teks`
-   - Atau: `Nama Karakter (phone): Teks`
-   - Maksimal 40 kata
-   - Contoh: `John Doe whispers: Jangan bilang siapa-siapa ya.`
+5. **WHISPER/PHONE** - JANGAN GUNAKAN format `whispers:` atau `(phone):` KECUALI jika Skenario secara eksplisit memintanya (e.g., "skenario: berbisik di telepon"). Jika tidak, fokus pada format 1-4.
 
 6. **JANGAN GUNAKAN**:
    - Radio format (`** [CH:X]`)
    - Department format (`** [Dept]`)
-   - Format lain selain 5 di atas
+   - Format whisper/phone KECUALI diminta Skenario.
 
 7. **PANJANG DIALOG**:
    - Setiap baris maksimal 60 kata
@@ -852,7 +836,7 @@ OUTPUT JSON:
 PENTING:
 - Nama karakter HARUS tanpa underscore (gunakan spasi)
 - Jumlah baris HARUS TEPAT sesuai kebutuhan
-- Dialog natural, logis, sesuai gambar pertama dan skenario
+- Dialog natural, logis, sesuai skenario
 - Variasikan format (jangan semua says)
 - Lanjutkan cerita antar gambar
 """
@@ -860,13 +844,15 @@ PENTING:
         dialogs_list = None
         ai_used = "Tidak ada"
 
+        # --- PERBAIKAN: Kirim 'None' untuk argumen image_content ---
+        
         # Coba OpenRouter (Prioritas 1)
         if self.openrouter_key_cycler:
             try:
-                await processing_msg.edit(content=f"🧠 {user_mention}, Mencoba OpenRouter (Prioritas 1)...")
+                await processing_msg.edit(content=f"🧠 {user_mention}, Mencoba OpenRouter (Teks)...")
                 key = next(self.openrouter_key_cycler)
-                dialogs_list = await self._generate_with_openrouter(key, prompt, image_content_openai)
-                if dialogs_list: ai_used = "OpenRouter"
+                dialogs_list = await self._generate_with_openrouter(key, prompt, None)
+                if dialogs_list: ai_used = "OpenRouter (Teks)"
             except Exception as e:
                  logger.error(f"====== SSRP: OPENROUTER GAGAL: {e} ======") 
                  await processing_msg.edit(content=f"⚠️ {user_mention}, OpenRouter gagal... Mencoba AgentRouter...")
@@ -875,10 +861,10 @@ PENTING:
         # Coba AgentRouter (Prioritas 2)
         if not dialogs_list and self.agentrouter_key_cycler:
             try:
-                await processing_msg.edit(content=f"🧠 {user_mention}, Mencoba AgentRouter (Prioritas 2)...")
+                await processing_msg.edit(content=f"🧠 {user_mention}, Mencoba AgentRouter (Teks)...")
                 key = next(self.agentrouter_key_cycler)
-                dialogs_list = await self._generate_with_agentrouter(key, prompt, image_content_openai)
-                if dialogs_list: ai_used = "AgentRouter"
+                dialogs_list = await self._generate_with_agentrouter(key, prompt, None)
+                if dialogs_list: ai_used = "AgentRouter (Teks)"
             except Exception as e:
                  logger.error(f"====== SSRP: AGENTROUTER GAGAL: {e} ======") 
                  await processing_msg.edit(content=f"⚠️ {user_mention}, AgentRouter gagal... Mencoba OpenAI...")
@@ -887,10 +873,10 @@ PENTING:
         # Coba OpenAI (Fallback 1)
         if not dialogs_list and self.openai_key_cycler:
             try:
-                await processing_msg.edit(content=f"🧠 {user_mention}, Mencoba OpenAI...")
+                await processing_msg.edit(content=f"🧠 {user_mention}, Mencoba OpenAI (Teks)...")
                 key = next(self.openai_key_cycler)
-                dialogs_list = await self._generate_with_openai(key, prompt, image_content_openai)
-                if dialogs_list: ai_used = "OpenAI"
+                dialogs_list = await self._generate_with_openai(key, prompt, None)
+                if dialogs_list: ai_used = "OpenAI (Teks)"
             except Exception as e:
                  logger.error(f"====== SSRP: OPENAI GAGAL: {e} ======") 
                  await processing_msg.edit(content=f"⚠️ {user_mention}, OpenAI gagal... Mencoba Gemini...")
@@ -899,10 +885,10 @@ PENTING:
         # Coba Gemini (Fallback 2)
         if not dialogs_list and self.gemini_key_cycler:
             try:
-                await processing_msg.edit(content=f"🧠 {user_mention}, Mencoba Gemini...")
+                await processing_msg.edit(content=f"🧠 {user_mention}, Mencoba Gemini (Teks)...")
                 key = next(self.gemini_key_cycler)
-                dialogs_list = await self._generate_with_gemini(key, prompt, image_content_openai)
-                if dialogs_list: ai_used = "Gemini"
+                dialogs_list = await self._generate_with_gemini(key, prompt, None)
+                if dialogs_list: ai_used = "Gemini (Teks)"
             except Exception as e:
                  logger.error(f"====== SSRP: GEMINI GAGAL: {e} ======")
                  await processing_msg.edit(content=f"⚠️ {user_mention}, Gemini gagal... Mencoba DeepSeek...")
@@ -932,7 +918,7 @@ PENTING:
         logger.info(f"AI ({ai_used}) generated dialogs for {len(dialogs_list)} images in '{language}'.")
         return dialogs_list, ai_used
 
-    # ===== FUNGSI RENDER TEXT YANG DIPERBAIKI =====
+    # ===== FUNGSI RENDER TEXT YANG DIPERBAIKI (TANPA WORDWRAP) =====
     async def add_dialogs_to_image(
         self,
         image_bytes: bytes,
@@ -947,16 +933,12 @@ PENTING:
             txt_overlay = Image.new('RGBA', img.size, (255, 255, 255, 0))
             draw = ImageDraw.Draw(txt_overlay)
             padding = 10
-            # max_text_width_px = width - (padding * 2) # Tidak digunakan lagi
-
-            wrapped_dialog_lines = []
             
-            # --- PERUBAHAN DI SINI ---
-            # Menghapus semua logika textwrap agar 1 dialog = 1 baris,
-            # sesuai permintaan Anda.
+            # --- PERBAIKAN: Logika textwrap dihapus total ---
+            wrapped_dialog_lines = []
             for dialog in dialogs:
                 wrapped_dialog_lines.append(dialog)
-            # --- AKHIR PERUBAHAN ---
+            # --- AKHIR PERBAIKAN ---
 
             # Hitung Tinggi & Posisi Y
             total_lines = len(wrapped_dialog_lines)
