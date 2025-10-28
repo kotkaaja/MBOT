@@ -308,6 +308,9 @@ class TokenCog(commands.Cog, name="Token"):
         self.GITHUB_TOKEN = self.config.GITHUB_TOKEN
         self.PRIMARY_REPO = self.config.PRIMARY_REPO
         self.CLAIMS_FILE_PATH = self.config.CLAIMS_FILE_PATH
+        # === [BARU] Tambahkan path file state ===
+        self.TOKEN_STATE_FILE_PATH = self.config.TOKEN_STATE_FILE_PATH 
+        
         self.TOKEN_SOURCES = self.config.TOKEN_SOURCES
         self.ROLE_DURATIONS = self.config.ROLE_DURATIONS
         self.ROLE_PRIORITY = self.config.ROLE_PRIORITY
@@ -473,6 +476,40 @@ class TokenCog(commands.Cog, name="Token"):
         await self.bot.wait_until_ready()
         logger.info("Background task 'cleanup_expired_tokens' siap.")
         
+    # === [BARU] Helper untuk menyimpan status klaim ===
+    async def _persist_current_claim_state(self):
+        """Menyimpan state self.bot.current_claim_source_alias ke GitHub."""
+        current_alias = self.bot.current_claim_source_alias
+        async with self.bot.github_lock:
+            logger.info(f"Menyimpan token_state.json. Alias: {current_alias}")
+            
+            # Dapatkan SHA terbaru
+            _, state_sha = get_github_file(
+                self.PRIMARY_REPO,
+                self.TOKEN_STATE_FILE_PATH, # Menggunakan path dari config
+                self.GITHUB_TOKEN
+            )
+            
+            new_state_data = {"current_claim_alias": current_alias}
+            
+            success = update_github_file(
+                self.PRIMARY_REPO,
+                self.TOKEN_STATE_FILE_PATH, # Menggunakan path dari config
+                json.dumps(new_state_data, indent=4),
+                state_sha,
+                f"Bot: Set claim state to {current_alias}",
+                self.GITHUB_TOKEN
+            )
+            
+            if not success:
+                logger.error("GAGAL menyimpan token_state.json di GitHub.")
+                # Kirim peringatan ke owner bot jika gagal menyimpan state
+                try:
+                    admin_user = self.bot.get_user(self.bot.owner_id) or await self.bot.fetch_user(self.bot.owner_id)
+                    if admin_user:
+                        await admin_user.send(f"⚠️ **PERINGATAN BOT:** Gagal menyimpan `token_state.json` ke GitHub. Status klaim (open/close) mungkin tidak sinkron setelah restart.")
+                except Exception as e:
+                    logger.error(f"Gagal mengirim DM peringatan kegagalan persist: {e}")
 
     # --- SLASH COMMANDS (ADMIN) ---
 
@@ -494,8 +531,20 @@ class TokenCog(commands.Cog, name="Token"):
             finally: self.bot.close_claim_message = None
 
         self.bot.current_claim_source_alias = alias_lower
+        
+        # === [BARU] Panggil helper untuk persist state ===
+        await self._persist_current_claim_state()
+
         embed = discord.Embed(title=f"📝 Sesi Klaim Dibuka: {alias.title()}", description=f"Sesi klaim untuk sumber `{alias.title()}` telah dibuka oleh {interaction.user.mention}.", color=discord.Color.green())
         try:
+            # Jika bot baru saja direstart, open_claim_message mungkin None meskipun state terbuka
+            # Kita perlu mencari pesan lama atau mengirim yang baru
+            
+            # Coba hapus view dari pesan lama jika ada (walaupun state sudah terbuka)
+            if self.bot.open_claim_message:
+                try: await self.bot.open_claim_message.edit(view=None)
+                except discord.HTTPException: pass
+
             self.bot.open_claim_message = await claim_channel.send(embed=embed, view=ClaimPanelView(self.bot))
             await interaction.response.send_message(f"✅ Panel klaim untuk `{alias.title()}` dikirim ke {claim_channel.mention}.", ephemeral=True)
         except discord.Forbidden:
@@ -523,6 +572,9 @@ class TokenCog(commands.Cog, name="Token"):
                  
         closed_alias = self.bot.current_claim_source_alias
         self.bot.current_claim_source_alias = None
+        
+        # === [BARU] Panggil helper untuk persist state (None) ===
+        await self._persist_current_claim_state()
         
         if self.CLAIM_CHANNEL_ID and (claim_channel := self.bot.get_channel(self.CLAIM_CHANNEL_ID)):
             try:
@@ -887,9 +939,10 @@ class TokenCog(commands.Cog, name="Token"):
 
                     await user.send(embed=embed)
                     
-                    await ctx.send(f"✅ Data klaim untuk {user.mention} berhasil direset. Notifikasi DM terkirim.", delete_after=15)
+                    # === [PERBAIKAN]: Menggunakan interaction.followup untuk merespon, bukan ctx.send ===
+                    await interaction.followup.send(f"✅ Data klaim untuk {user.mention} berhasil direset. Notifikasi DM terkirim.", ephemeral=True)
                 except discord.Forbidden:
-                     await ctx.send(f"✅ Data klaim untuk {user.mention} berhasil direset, namun gagal mengirim notifikasi DM.", delete_after=15)
+                     await interaction.followup.send(f"✅ Data klaim untuk {user.mention} berhasil direset, namun gagal mengirim notifikasi DM.", ephemeral=True)
                 if user.id in self.cooldown_notified_users:
                     self.cooldown_notified_users.remove(user.id)
             else:
@@ -1105,7 +1158,7 @@ class TokenCog(commands.Cog, name="Token"):
     @app_commands.check(is_admin_check_slash)
     async def show_config_slash(self, interaction: discord.Interaction):
         embed = discord.Embed(title="🔧 Konfigurasi Bot (Token & Role)", color=discord.Color.teal())
-        embed.add_field(name="Repo Utama (claims.json)", value=f"`{self.PRIMARY_REPO}`" if self.PRIMARY_REPO else "Belum diatur", inline=False)
+        embed.add_field(name="Repo Utama (claims.json/token_state.json)", value=f"`{self.PRIMARY_REPO}`" if self.PRIMARY_REPO else "Belum diatur", inline=False)
         embed.add_field(name="Channel Klaim Token", value=f"<#{self.CLAIM_CHANNEL_ID}> (`{self.CLAIM_CHANNEL_ID}`)" if self.CLAIM_CHANNEL_ID else "Belum diatur", inline=False)
         
         role_req_ch_id = self.bot.config.ROLE_REQUEST_CHANNEL_ID
