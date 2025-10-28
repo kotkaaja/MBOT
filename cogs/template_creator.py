@@ -81,7 +81,6 @@ WEAPON_LIST = {
 
 # ============================
 # UI COMPONENTS
-# (Tidak ada perubahan di bagian ini)
 # ============================
 class MacroTypeSelectView(discord.ui.View):
     """View untuk memilih tipe macro"""
@@ -175,7 +174,6 @@ class WeaponSelectView(discord.ui.View):
 
 # ============================
 # MODAL KONFIGURASI
-# (Tidak ada perubahan di bagian ini)
 # ============================
 
 class ConfigInputModal(discord.ui.Modal):
@@ -196,7 +194,6 @@ class ConfigInputModal(discord.ui.Modal):
         required=False,
         row=3
     )
-    # --- Input Bahasa Baru ---
     language = discord.ui.TextInput(
         label="Bahasa/Aksen RP (Opsional)",
         placeholder="Contoh: English, Spanish (Mexico), Japanese",
@@ -205,7 +202,6 @@ class ConfigInputModal(discord.ui.Modal):
         required=False,
         row=4
     )
-    # -----------------------
 
     def __init__(self, macro_type: str, title: str):
         super().__init__(title=title)
@@ -213,7 +209,7 @@ class ConfigInputModal(discord.ui.Modal):
 
         self.theme_value = None
         self.details_value = None
-        self.language_value = None # Simpan bahasa
+        self.language_value = None
         self.config_value = None
 
         if macro_type == "auto_rp":
@@ -239,7 +235,7 @@ class ConfigInputModal(discord.ui.Modal):
     async def on_submit(self, interaction: discord.Interaction):
         self.theme_value = self.theme.value.strip()
         self.details_value = self.details.value.strip() or "Tidak ada detail tambahan"
-        self.language_value = self.language.value.strip() or "Bahasa Indonesia baku" # Ambil bahasa
+        self.language_value = self.language.value.strip() or "Bahasa Indonesia baku"
 
         try:
             if self.macro_type == "auto_rp":
@@ -270,7 +266,7 @@ class ConfigInputModal(discord.ui.Modal):
             await interaction.response.send_message(
                 f"✅ **Konfigurasi Diterima**\n"
                 f"**Tema:** {self.theme_value}\n"
-                f"**Bahasa:** {self.language_value}\n" # Tampilkan bahasa
+                f"**Bahasa:** {self.language_value}\n"
                 f"**Info:** {config_info}",
                 ephemeral=True
             )
@@ -286,24 +282,22 @@ class WeaponConfigModal(discord.ui.Modal, title="Konfigurasi Gun RP (Aksi Tungga
     """Modal untuk Gun RP 'draw' ATAU 'holster'."""
     theme = discord.ui.TextInput(label="Tema/Aktivitas RP (Wajib)", placeholder="Contoh: Mengeluarkan Deagle", max_length=100, required=True, row=0)
     details = discord.ui.TextInput(label="Detail Tambahan (opsional)", placeholder="Contoh: Sambil awas", style=discord.TextStyle.paragraph, max_length=300, required=False, row=1)
-    # --- Input Bahasa Baru ---
     language = discord.ui.TextInput(label="Bahasa/Aksen RP (Opsional)", placeholder="Default: Bahasa Indonesia baku", default="Bahasa Indonesia baku", max_length=50, required=False, row=2)
-    # -----------------------
 
     def __init__(self):
         super().__init__()
         self.theme_value = None
         self.details_value = None
-        self.language_value = None # Simpan bahasa
+        self.language_value = None
 
     async def on_submit(self, interaction: discord.Interaction):
         self.theme_value = self.theme.value.strip()
         self.details_value = self.details.value.strip() or "Tidak ada detail tambahan"
-        self.language_value = self.language.value.strip() or "Bahasa Indonesia baku" # Ambil bahasa
+        self.language_value = self.language.value.strip() or "Bahasa Indonesia baku"
         await interaction.response.send_message(
             f"✅ **Tema Gun RP Diterima**\n"
             f"**Tema:** {self.theme_value}\n"
-            f"**Bahasa:** {self.language_value}", # Tampilkan bahasa
+            f"**Bahasa:** {self.language_value}",
             ephemeral=True
         )
 
@@ -314,9 +308,7 @@ class WeaponConfigModalBoth(discord.ui.Modal, title="Konfigurasi Gun RP (Keduany
     details_draw = discord.ui.TextInput(label="Detail Tambahan (Keluarkan)", placeholder="Contoh: Sambil awas", max_length=300, required=False, row=1)
     theme_holster = discord.ui.TextInput(label="Tema Simpan Senjata (Wajib)", placeholder="Contoh: Memasukkan Deagle ke holster", max_length=100, required=True, row=2)
     details_holster = discord.ui.TextInput(label="Detail Tambahan (Simpan)", placeholder="Contoh: Setelah aman", max_length=300, required=False, row=3)
-    # --- Input Bahasa Baru ---
     language = discord.ui.TextInput(label="Bahasa/Aksen RP (Opsional)", placeholder="Default: Bahasa Indonesia baku", default="Bahasa Indonesia baku", max_length=50, required=False, row=4)
-    # -----------------------
 
     def __init__(self):
         super().__init__()
@@ -324,18 +316,18 @@ class WeaponConfigModalBoth(discord.ui.Modal, title="Konfigurasi Gun RP (Keduany
         self.details_draw_value = None
         self.theme_holster_value = None
         self.details_holster_value = None
-        self.language_value = None # Simpan bahasa
+        self.language_value = None
 
     async def on_submit(self, interaction: discord.Interaction):
         self.theme_draw_value = self.theme_draw.value.strip()
         self.details_draw_value = self.details_draw.value.strip() or "Tidak ada detail tambahan"
         self.theme_holster_value = self.theme_holster.value.strip()
         self.details_holster_value = self.details_holster.value.strip() or "Tidak ada detail tambahan"
-        self.language_value = self.language.value.strip() or "Bahasa Indonesia baku" # Ambil bahasa
+        self.language_value = self.language.value.strip() or "Bahasa Indonesia baku"
 
         await interaction.response.send_message(
             f"✅ **Tema Gun RP Diterima**\n"
-            f"**Bahasa:** {self.language_value}\n" # Tampilkan bahasa
+            f"**Bahasa:** {self.language_value}\n"
             f"**Tema Keluarkan:** {self.theme_draw_value}\n"
             f"**Tema Simpan:** {self.theme_holster_value}",
             ephemeral=True
@@ -350,20 +342,15 @@ class TemplateCreatorCog(commands.Cog, name="TemplateCreator"):
         self.config = bot.config
         self.active_sessions = {}
 
-    # --- DIPERBARUI: Terima parameter bahasa ---
     async def _get_ai_analysis(self, theme: str, details: str, language: str) -> Optional[List[Dict]]:
         """Menggunakan AI untuk generate langkah-langkah RP dalam bahasa yang diminta."""
-        # --- [INI BAGIAN KRUSIAL] ---
-        # Prompt sekarang menggunakan AI_TEMPLATE_PROMPT yang baru
-        prompt = AI_TEMPLATE_PROMPT.format(theme=theme, details=details, language=language) # Masukkan bahasa ke prompt
-        logger.info(f"Mengirim prompt ke AI (Bahasa: {language})") # Log bahasa yang digunakan
+        prompt = AI_TEMPLATE_PROMPT.format(theme=theme, details=details, language=language)
+        logger.info(f"Mengirim prompt ke AI (Bahasa: {language})")
 
-        # (Logika pemilihan AI tetap sama)
         if self.config.GEMINI_API_KEYS:
             try:
                 genai.configure(api_key=self.config.GEMINI_API_KEYS[0])
                 model = genai.GenerativeModel('gemini-1.5-flash')
-                # Perbarui cara memanggil Gemini untuk JSON output
                 response = await model.generate_content_async(
                     prompt,
                     generation_config=genai.types.GenerationConfig(
@@ -413,9 +400,7 @@ class TemplateCreatorCog(commands.Cog, name="TemplateCreator"):
                 logger.error(f"OpenAI gagal: {e}")
 
         return None
-    # ------------------------------------------
 
-    # (Fungsi _format_* tetap sama)
     def _format_pc_auto_rp(self, title: str, modifier: str, primary_key: str, steps: List[Dict]) -> str:
         output = f"TITLE:{title}\nMODIFIER:{modifier}\nPRIMARY_KEY:{primary_key}\n"
         for step in steps: output += f"STEP:{step.get('delay', 2)}:{step['command']}\n"
@@ -431,9 +416,7 @@ class TemplateCreatorCog(commands.Cog, name="TemplateCreator"):
         for step in steps: output += f"STEP:{step.get('delay', 1)}:{step['command']}\n"
         output += "END_GUN_MACRO\n"; return output
 
-    # --- PERUBAHAN NAMA PERINTAH ---
     @commands.command(name="buatrp")
-    # -------------------------------
     async def create_template_command(self, ctx):
         """Membuat template Auto RP untuk KotkaHelper (PC/Mobile)"""
         if ctx.author.id in self.active_sessions:
@@ -471,17 +454,27 @@ class TemplateCreatorCog(commands.Cog, name="TemplateCreator"):
                         self.author_id = author_id
                         self.interaction = None
                         btn = discord.ui.Button(label=button_label, style=discord.ButtonStyle.primary)
-                        # --- PERBAIKAN ERROR TypeError ---
                         btn.callback = self.open_modal_btn
-                        # ---------------------------------
                         self.add_item(btn)
 
                     async def interaction_check(self, interaction: discord.Interaction) -> bool:
-                        return interaction.user.id == self.author_id
+                        if interaction.user.id != self.author_id:
+                            await interaction.response.send_message("❌ Tombol ini bukan untuk Anda!", ephemeral=True)
+                            return False
+                        return True
 
-                    # --- PERBAIKAN ERROR TypeError ---
-                    async def open_modal_btn(self, interaction: discord.Interaction): # Hapus parameter 'button'
-                    # ---------------------------------
+                    async def open_modal_btn(self, interaction: discord.Interaction):
+                        # --- PERBAIKAN 1: Disable tombol ---
+                        # Disable tombol agar tidak bisa diklik lagi
+                        for item in self.children:
+                            item.disabled = True
+                        try:
+                            # Edit pesan untuk menunjukkan tombol non-aktif
+                            await interaction.message.edit(view=self)
+                        except discord.NotFound:
+                            pass # Pesan mungkin terhapus, abaikan
+                        # ------------------------------------
+                        
                         self.interaction = interaction
                         self.stop()
 
@@ -537,15 +530,13 @@ class TemplateCreatorCog(commands.Cog, name="TemplateCreator"):
                             "theme": modal.theme_value, "details": modal.details_value
                         })
                 else:
-                     # --- PERBAIKAN ---
-                     # Hapus pesan tombol jika modal dibatalkan/gagal
-                     if modal_msg:
-                         try:
+                     # --- PERBAIKAN 2: Cleanup saat modal cancel ---
+                     try:
+                         if modal_msg:
                              await modal_msg.edit(content="Pembuatan template dibatalkan.", view=None)
-                         except discord.NotFound:
-                             pass # Pesan mungkin sudah terhapus
-                     # -----------------
-                     del self.active_sessions[ctx.author.id]; return # Modal dibatalkan
+                     except Exception as e:
+                         logger.warning(f"Gagal edit modal_msg saat cancel (gun): {e}")
+                     del self.active_sessions[ctx.author.id]; return
             else: # Auto RP / CMD
                 if modal.theme_value: # Cek apakah modal berhasil disubmit
                     self.active_sessions[ctx.author.id].update({
@@ -559,37 +550,33 @@ class TemplateCreatorCog(commands.Cog, name="TemplateCreator"):
                     elif macro_type == "cmd":
                         self.active_sessions[ctx.author.id]["command"] = modal.config_value
                 else:
-                    # --- PERBAIKAN ---
-                    # Hapus pesan tombol jika modal dibatalkan/gagal
-                    if modal_msg:
-                         try:
-                             await modal_msg.edit(content="Pembuatan template dibatalkan.", view=None)
-                         except discord.NotFound:
-                             pass # Pesan mungkin sudah terhapus
-                    # -----------------
-                    del self.active_sessions[ctx.author.id]; return # Modal dibatalkan
+                    # --- PERBAIKAN 2: Cleanup saat modal cancel ---
+                    try:
+                        if modal_msg:
+                            await modal_msg.edit(content="Pembuatan template dibatalkan.", view=None)
+                    except Exception as e:
+                        logger.warning(f"Gagal edit modal_msg saat cancel (cmd/auto): {e}")
+                    del self.active_sessions[ctx.author.id]; return
 
         except Exception as e:
             logger.error(f"Error alur konfigurasi: {e}", exc_info=True)
-            if ctx.author.id in self.active_sessions: del self.active_sessions[ctx.author.id]
+            if ctx.author.id in self.active_sessions: del self.active_sessions[ctx.author.id] # Pastikan sesi dihapus
             
-            # --- PERBAIKAN DI BLOK EXCEPT ---
-            # Pastikan modal_msg juga dihapus di sini jika ada error
-            if modal_msg:
-                try:
+            try:
+                if modal_msg:
                     await modal_msg.edit(content=f"❌ Error: {e}", view=None)
-                except discord.NotFound:
-                    await ctx.send(f"❌ Error: {e}") # Fallback jika modal_msg hilang
-            else:
-                await ctx.send(f"❌ Error: {e}")
+                else:
+                    await ctx.send(f"❌ Error: {e}")
+            except Exception as e_inner:
+                 logger.error(f"Gagal kirim error cleanup: {e_inner}")
+                 await ctx.send(f"❌ Error: {e}") # Fallback
             return
-            # -------------------------------
 
         if modal_msg: 
             try:
                 await modal_msg.delete() # Hapus pesan tombol jika lolos submit
             except discord.NotFound:
-                pass # Abaikan jika sudah terhapus (misal karena modal gagal)
+                pass # Abaikan jika sudah terhapus
 
         # --- Generate AI ---
         session = self.active_sessions.get(ctx.author.id)
@@ -686,9 +673,7 @@ class TemplateCreatorCog(commands.Cog, name="TemplateCreator"):
         del self.active_sessions[ctx.author.id] # Hapus sesi setelah selesai
         logger.info(f"Template '{macro_type}' by {ctx.author.id} ({language})")
 
-    # --- PERUBAHAN NAMA PERINTAH BANTUAN ---
     @commands.command(name="rphelp")
-    # --------------------------------------
     async def template_help_command(self, ctx):
         """Bantuan untuk fitur Template Creator"""
         embed = discord.Embed(
