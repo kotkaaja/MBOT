@@ -6,7 +6,7 @@ import logging
 import io
 import base64
 from PIL import Image, ImageDraw, ImageFont, ImageOps
-from openai import AsyncOpenAI # Untuk OpenAI
+from openai import AsyncOpenAI # Untuk OpenAI & AgentRouter
 import httpx # Untuk DeepSeek & OpenRouter
 import google.generativeai as genai # Untuk Gemini
 from typing import List, Dict, Optional, Tuple
@@ -109,7 +109,6 @@ class DialogSettingsView(ui.View):
         self.info_data = info_data
         self.dialog_counts = [5] * len(images)
         self.positions = ["bawah"] * len(images)
-        # --- Default ke transparent ---
         self.background_styles = ["transparent"] * len(images) # Default transparent
         self.current_image_index = 0
 
@@ -121,7 +120,7 @@ class DialogSettingsView(ui.View):
 
         self.add_item(DialogCountSelect(self, self.dialog_counts[self.current_image_index]))
         self.add_item(PositionSelect(self, self.positions[self.current_image_index]))
-        self.add_item(BackgroundStyleSelect(self, self.background_styles[self.current_image_index])) # Tambahkan select background
+        self.add_item(BackgroundStyleSelect(self, self.background_styles[self.current_image_index]))
 
         row_nav = 3
         if self.current_image_index > 0:
@@ -142,7 +141,7 @@ class DialogSettingsView(ui.View):
         )
         embed.add_field(name="Jumlah Baris", value=f"`{self.dialog_counts[idx]}` baris", inline=True)
         embed.add_field(name="Posisi Teks", value=f"`{self.positions[idx].capitalize()}`", inline=True)
-        embed.add_field(name="Background", value=f"`{self.background_styles[idx].capitalize()}`", inline=True) # Tampilkan style background
+        embed.add_field(name="Background", value=f"`{self.background_styles[idx].capitalize()}`", inline=True)
 
         try:
             file = discord.File(io.BytesIO(self.images[idx]), filename=f"image_preview_{idx}.png")
@@ -150,7 +149,6 @@ class DialogSettingsView(ui.View):
             await interaction.response.edit_message(embed=embed, view=self, attachments=[file])
         except Exception as e:
             logger.error(f"Gagal update message preview: {e}")
-            # Coba edit tanpa attachment jika gagal
             await interaction.response.edit_message(embed=embed, view=self, attachments=[])
 
 
@@ -186,7 +184,6 @@ class PositionSelect(ui.Select):
 class BackgroundStyleSelect(ui.Select):
     """Select untuk gaya background teks"""
     def __init__(self, parent_view: DialogSettingsView, current_value: str):
-        # 'current_value' akan 'transparent' by default dari DialogSettingsView
         options = [
             discord.SelectOption(label="Overlay", value="overlay", description="Background hitam semi-transparan.", emoji="⬛", default=(current_value == "overlay")),
             discord.SelectOption(label="Transparan", value="transparent", description="Tanpa background, hanya teks + shadow.", emoji="⬜", default=(current_value == "transparent"))
@@ -242,7 +239,7 @@ class FinishButton(ui.Button):
             self.parent_view.info_data,
             self.parent_view.dialog_counts,
             self.parent_view.positions,
-            self.parent_view.background_styles # Kirim background styles
+            self.parent_view.background_styles
         )
 
 
@@ -255,7 +252,7 @@ class SSRPChatlogCog(commands.Cog, name="SSRPChatlog"):
 
     def __init__(self, bot):
         self.bot = bot
-        self.config = bot.config # Akses config dari bot
+        self.config = bot.config
 
         # --- Setup API Clients & Key Cyclers ---
         self.openai_key_cycler = None
@@ -282,9 +279,7 @@ class SSRPChatlogCog(commands.Cog, name="SSRPChatlog"):
         # --- [BARU] Setup OpenRouter ---
         self.openrouter_key_cycler = None
         if hasattr(self.config, 'OPENROUTER_API_KEY') and self.config.OPENROUTER_API_KEY:
-            # Menggunakan list agar itertools.cycle berfungsi
             self.openrouter_key_cycler = itertools.cycle([self.config.OPENROUTER_API_KEY]) 
-            # Siapkan header kustom dari config
             self.openrouter_headers = {
                 "HTTP-Referer": getattr(self.config, 'OPENROUTER_SITE_URL', 'http://localhost'),
                 "X-Title": getattr(self.config, 'OPENROUTER_SITE_NAME', 'MBOT'),
@@ -292,12 +287,20 @@ class SSRPChatlogCog(commands.Cog, name="SSRPChatlog"):
             logger.info(f"✅ OpenRouter key dimuat untuk SSRP Chatlog.")
         else:
             logger.warning("⚠️ OpenRouter API key (OPENROUTER_API_KEY) tidak ditemukan di config.")
+            
+        # --- [BARU] Setup AgentRouter ---
+        self.agentrouter_key_cycler = None
+        if hasattr(self.config, 'AGENTROUTER_API_KEY') and self.config.AGENTROUTER_API_KEY:
+            self.agentrouter_key_cycler = itertools.cycle([self.config.AGENTROUTER_API_KEY])
+            logger.info(f"✅ AgentRouter key dimuat untuk SSRP Chatlog.")
+        else:
+            logger.warning("⚠️ AgentRouter API key (AGENTROUTER_API_KEY) tidak ditemukan di config.")
         # --- End Setup API ---
 
 
-        # ===== STYLING SETTINGS (DISESUAIKAN DENGAN CHATLOG MAGICIAN) =====
+        # ===== STYLING SETTINGS =====
         self.FONT_SIZE = 12
-        self.LINE_HEIGHT_ADD = 3 # Kurangi spasi antar baris
+        self.LINE_HEIGHT_ADD = 3 
         self.FONT_PATH = self._find_font(["arial.ttf", "Arial.ttf", "LiberationSans-Regular.ttf", "DejaVuSans.ttf"])
 
         # Warna teks
@@ -310,12 +313,12 @@ class SSRPChatlogCog(commands.Cog, name="SSRPChatlog"):
         self.COLOR_RADIO = self.COLOR_PALEYELLOW; self.COLOR_DEP = (251, 132, 131)
         self.COLOR_OOC = (170, 170, 170)
 
-        # Text shadow settings (4 arah)
+        # Text shadow settings
         self.COLOR_SHADOW = (0, 0, 0)
         self.SHADOW_OFFSETS = [(-1, -1), (1, -1), (-1, 1), (1, 1)]
 
         # Background overlay
-        self.BG_COLOR = (0, 0, 0, 180) # Hitam semi-transparan (alpha 180/255)
+        self.BG_COLOR = (0, 0, 0, 180)
 
         # Muat font
         try:
@@ -349,12 +352,9 @@ class SSRPChatlogCog(commands.Cog, name="SSRPChatlog"):
 
         for name in font_names:
             for dir_path in font_dirs:
-                # Cek langsung di direktori
                 font_path = os.path.join(dir_path, name)
                 if os.path.exists(font_path):
                     return font_path
-
-                # Cek rekursif 1 level
                 try:
                     for item in os.listdir(dir_path):
                         subdir_path = os.path.join(dir_path, item)
@@ -362,18 +362,20 @@ class SSRPChatlogCog(commands.Cog, name="SSRPChatlog"):
                              font_path_subdir = os.path.join(subdir_path, name)
                              if os.path.exists(font_path_subdir):
                                  return font_path_subdir
-                except OSError: # Izin baca
+                except OSError:
                     continue
 
         logger.warning(f"Tidak dapat menemukan font: {font_names} di direktori {font_dirs}.")
-        return font_names[0] # Kembalikan nama pertama sebagai fallback
+        return font_names[0]
 
     @commands.command(name="buatssrp", aliases=["createssrp"])
     async def create_ssrp(self, ctx: commands.Context):
         """Buat SSRP Chatlog dari gambar dengan AI (gaya Chatlog Magician)"""
 
-        # --- [PERBAIKAN] Cek ketersediaan AI (termasuk OpenRouter) ---
-        if not self.openai_key_cycler and not self.deepseek_key_cycler and not self.gemini_key_cycler and not self.openrouter_key_cycler:
+        # --- [PERBAIKAN] Cek ketersediaan AI (termasuk OpenRouter & AgentRouter) ---
+        if not self.openai_key_cycler and not self.deepseek_key_cycler and \
+           not self.gemini_key_cycler and not self.openrouter_key_cycler and \
+           not self.agentrouter_key_cycler:
             await ctx.send("❌ Fitur SSRP Chatlog tidak tersedia (Tidak ada API Key AI yang dikonfigurasi)")
             return
 
@@ -390,7 +392,7 @@ class SSRPChatlogCog(commands.Cog, name="SSRPChatlog"):
         images_bytes_list = []
         valid_extensions = ('.png', '.jpg', '.jpeg'); count = 0
         for attachment in ctx.message.attachments:
-            if count >= 10: break # Batasi 10 gambar
+            if count >= 10: break
             if attachment.filename.lower().endswith(valid_extensions):
                 if attachment.size > 8 * 1024 * 1024:
                     await ctx.send(f"⚠️ Gambar `{attachment.filename}` terlalu besar (>8MB), dilewati.")
@@ -438,7 +440,7 @@ class SSRPChatlogCog(commands.Cog, name="SSRPChatlog"):
         info_data: Dict,
         dialog_counts: List[int],
         positions: List[str],
-        background_styles: List[str] # Terima background styles
+        background_styles: List[str]
     ):
         """Proses generate dialog dan overlay ke gambar"""
         processing_msg = None
@@ -456,14 +458,14 @@ class SSRPChatlogCog(commands.Cog, name="SSRPChatlog"):
              await interaction.channel.send(f"❌ Error memulai proses: {e}")
              return
 
-        warnings = [] # Kumpulkan peringatan ukuran gambar
+        warnings = [] 
 
         try:
             await processing_msg.edit(content=f"🧠 {interaction.user.mention}, AI sedang membuat dialog...")
 
             language = info_data.get('language', 'Bahasa Indonesia baku')
 
-            # --- [PERBAIKAN] Panggil Fungsi AI dengan Fallback Baru ---
+            # --- Panggil Fungsi AI dengan Fallback ---
             all_dialogs_raw, ai_used = await self.generate_dialogs_with_ai(
                 images_bytes_list, info_data, dialog_counts, language, 
                 processing_msg, interaction.user.mention
@@ -479,7 +481,7 @@ class SSRPChatlogCog(commands.Cog, name="SSRPChatlog"):
                     img_check = Image.open(io.BytesIO(img_bytes))
                     if img_check.width != 800 or img_check.height != 600:
                         warnings.append(f"Gambar {idx+1} ({img_check.width}x{img_check.height}) bukan 800x600, hasil mungkin kurang optimal.")
-                    img_check.close() # Tutup setelah cek
+                    img_check.close()
                 except Exception as img_err:
                     logger.warning(f"Gagal memeriksa ukuran gambar {idx+1}: {img_err}")
                 # --- Akhir Pengecekan ---
@@ -490,15 +492,14 @@ class SSRPChatlogCog(commands.Cog, name="SSRPChatlog"):
                     content=f"🎨 {interaction.user.mention}, memproses gambar {idx + 1}/{len(images_bytes_list)} ({len(limited_dialogs)} baris, bg: {bg_style}, AI: {ai_used})..."
                 )
 
-                # Panggil fungsi overlay yang sudah diperbarui
                 processed_img = await self.add_dialogs_to_image(
                     img_bytes,
                     limited_dialogs,
                     position,
-                    bg_style # Pass background style
+                    bg_style
                 )
                 processed_images_bytes.append(processed_img)
-                await asyncio.sleep(0.2) # Perkecil delay
+                await asyncio.sleep(0.2)
 
             final_content = f"✅ Selesai! Hasil SSRP untuk {interaction.user.mention} (AI: {ai_used}):"
             if warnings:
@@ -511,7 +512,7 @@ class SSRPChatlogCog(commands.Cog, name="SSRPChatlog"):
             for i in range(0, len(processed_images_bytes), 10):
                 chunk = processed_images_bytes[i:i+10]
                 files = [
-                    discord.File(io.BytesIO(img_data), filename=f"ssrp_generated{i+j+1}.png") # Simpan sebagai PNG
+                    discord.File(io.BytesIO(img_data), filename=f"ssrp_generated{i+j+1}.png")
                     for j, img_data in enumerate(chunk)
                 ]
 
@@ -530,13 +531,12 @@ class SSRPChatlogCog(commands.Cog, name="SSRPChatlog"):
                 await interaction.channel.send(embed=embed_result, files=files)
 
         except Exception as e:
-            # Ini adalah blok catch yang menangani error dari 'generate_dialogs_with_ai'
             logger.error(f"Error saat proses SSRP: {e}", exc_info=True)
             error_message = f"❌ Terjadi kesalahan: {str(e)[:1500]}"
             if processing_msg:
                 try:
                     await processing_msg.edit(content=f"{interaction.user.mention}, {error_message}")
-                except discord.NotFound: # Jika pesan sudah dihapus
+                except discord.NotFound:
                     await interaction.channel.send(content=f"{interaction.user.mention}, {error_message}")
             else:
                  await interaction.channel.send(content=f"{interaction.user.mention}, {error_message}")
@@ -558,7 +558,6 @@ class SSRPChatlogCog(commands.Cog, name="SSRPChatlog"):
                 temperature=0.7
             )
             response_content = response.choices[0].message.content
-            # Tambah pembersihan ringan jika JSON terbungkus markdown
             cleaned_response = re.sub(r'```json\s*|\s*```', '', response_content.strip(), flags=re.DOTALL)
             data = json.loads(cleaned_response)
             result = data.get("dialogs_per_image")
@@ -566,15 +565,45 @@ class SSRPChatlogCog(commands.Cog, name="SSRPChatlog"):
                  raise ValueError("Format JSON dari OpenAI tidak valid (bukan list).")
             return result
         except Exception as e:
-            # Log error spesifik
             logger.warning(f"SPOILER: OpenAI Gagal: {e}")
             if "rate_limit_exceeded" in str(e).lower() or "429" in str(e):
-                 # Umpan balik spesifik untuk rate limit
                  raise Exception(f"OpenAI Rate Limit. Mencoba AI lain...") from e
+            raise e
+
+    # --- [BARU] Fungsi untuk AgentRouter ---
+    async def _generate_with_agentrouter(self, api_key: str, prompt: str, image_content: Dict) -> Optional[List[List[str]]]:
+        """Coba generate dialog dengan Agent Router (OpenAI Compatible)"""
+        try:
+            # Menggunakan library OpenAI tetapi mengganti base_url
+            client = AsyncOpenAI(
+                api_key=api_key,
+                base_url="https://agentrouter.org/v1", # URL dari user
+                timeout=45.0
+            )
+            response = await client.chat.completions.create(
+                model="gpt-4o-mini", # Asumsikan AgentRouter bisa merutekan model ini
+                messages=[
+                    {"role": "system", "content": "Anda adalah penulis SSRP ahli. Output HANYA JSON."},
+                    {"role": "user", "content": [{"type": "text", "text": prompt}, image_content]}
+                ],
+                response_format={"type": "json_object"}, 
+                max_tokens=3000, 
+                temperature=0.7
+            )
+            response_content = response.choices[0].message.content
+            cleaned_response = re.sub(r'```json\s*|\s*```', '', response_content.strip(), flags=re.DOTALL)
+            data = json.loads(cleaned_response)
+            result = data.get("dialogs_per_image")
+            if not result or not isinstance(result, list):
+                 raise ValueError("Format JSON dari AgentRouter tidak valid (bukan list).")
+            return result
+        except Exception as e:
+            # Log error spesifik, terutama jika 401 (API Key salah) atau 500
+            logger.warning(f"SPOILER: AgentRouter Gagal: {e}")
             raise e # Lemparkan error lagi agar ditangkap oleh generate_dialogs_with_ai
 
     async def _generate_with_deepseek(self, api_key: str, prompt: str, image_content: Optional[Dict]) -> Optional[List[List[str]]]:
-        """Coba generate dialog dengan DeepSeek (Note: DeepSeek mungkin tidak support gambar)"""
+        """Coba generate dialog dengan DeepSeek (Hanya Teks)"""
         try:
             async with httpx.AsyncClient(timeout=45.0) as client:
                 payload = {
@@ -590,7 +619,7 @@ class SSRPChatlogCog(commands.Cog, name="SSRPChatlog"):
                     json=payload,
                     headers={"Authorization": f"Bearer {api_key}"}
                 )
-                response.raise_for_status() # Error jika status 4xx atau 5xx
+                response.raise_for_status()
                 
                 response_json = response.json()
                 response_content = response_json["choices"][0]["message"]["content"]
@@ -603,9 +632,8 @@ class SSRPChatlogCog(commands.Cog, name="SSRPChatlog"):
                      raise ValueError("Format JSON dari DeepSeek tidak valid (bukan list).")
                 return result
         except Exception as e:
-            # Log error spesifik
             logger.warning(f"SPOILER: DeepSeek Gagal: {e}")
-            raise e # Lemparkan error lagi
+            raise e
 
     async def _generate_with_gemini(self, api_key: str, prompt: str, image_content: Optional[Dict]) -> Optional[List[List[str]]]:
         """Coba generate dialog dengan Gemini"""
@@ -614,7 +642,7 @@ class SSRPChatlogCog(commands.Cog, name="SSRPChatlog"):
             # --- [PERBAIKAN] Ganti nama model ke 'latest' untuk menghindari 404 ---
             model = genai.GenerativeModel('gemini-1.5-flash-latest')
 
-            gemini_content = [prompt] # Selalu mulai dengan prompt
+            gemini_content = [prompt] 
 
             if image_content and image_content['type'] == 'image_url':
                  img_url_data = image_content['image_url']['url']
@@ -623,7 +651,7 @@ class SSRPChatlogCog(commands.Cog, name="SSRPChatlog"):
                      mime_type = mime_type.split(':')[1]
                      img_bytes = base64.b64decode(base64_data)
                      img_part = Image.open(io.BytesIO(img_bytes))
-                     gemini_content.append(img_part) # Tambahkan objek gambar PIL
+                     gemini_content.append(img_part)
                  else:
                      logger.warning("Format image_content tidak didukung untuk Gemini (bukan base64).")
             
@@ -639,7 +667,6 @@ class SSRPChatlogCog(commands.Cog, name="SSRPChatlog"):
             if response.prompt_feedback.block_reason:
                 raise Exception(f"Gemini diblokir: {response.prompt_feedback.block_reason.name}")
             if response.candidates and response.candidates[0].finish_reason.name != "STOP":
-                # Jika finish reason bukan STOP (misal: SAFETY, RECITATION, MAX_TOKENS)
                 raise Exception(f"Gemini finish reason: {response.candidates[0].finish_reason.name}")
 
             cleaned_response = re.sub(r'```json\s*|\s*```', '', response.text.strip(), flags=re.DOTALL)
@@ -652,22 +679,21 @@ class SSRPChatlogCog(commands.Cog, name="SSRPChatlog"):
                  raise ValueError("Format JSON dari Gemini tidak valid (bukan list).")
             return result
         except Exception as e:
-            # Log error spesifik
             logger.warning(f"SPOILER: Gemini Gagal: {e}")
-            raise e # Lemparkan error lagi
+            raise e
 
     # --- [BARU] Fungsi untuk OpenRouter ---
     async def _generate_with_openrouter(self, api_key: str, prompt: str, image_content: Optional[Dict]) -> Optional[List[List[str]]]:
-        """Coba generate dialog dengan OpenRouter"""
+        """Coba generate dialog dengan OpenRouter (Vision)"""
         if not image_content or image_content['type'] != 'image_url':
             raise ValueError("OpenRouter memerlukan konten gambar (base64) untuk model vision.")
         
-        image_url_data = image_content['image_url']['url'] # Format: "data:image/jpeg;base64,..."
+        image_url_data = image_content['image_url']['url']
 
         try:
             async with httpx.AsyncClient(timeout=60.0) as client:
                 payload = {
-                    "model": "nvidia/nemotron-nano-12b-v2-vl:free", # Model vision gratis dari OpenRouter
+                    "model": "nvidia/nemotron-nano-12b-v2-vl:free", # Model vision gratis
                     "messages": [
                         {
                             "role": "user",
@@ -682,7 +708,6 @@ class SSRPChatlogCog(commands.Cog, name="SSRPChatlog"):
                     "max_tokens": 3000
                 }
                 
-                # Gabungkan headers kustom (Referer/Title)
                 headers = {"Authorization": f"Bearer {api_key}"}
                 if hasattr(self, 'openrouter_headers'):
                     headers.update(self.openrouter_headers)
@@ -697,7 +722,6 @@ class SSRPChatlogCog(commands.Cog, name="SSRPChatlog"):
                 response_json = response.json()
                 response_content = response_json["choices"][0]["message"]["content"]
                 
-                # Pembersihan ringan jika JSON terbungkus markdown
                 cleaned_response = re.sub(r'```json\s*|\s*```', '', response_content.strip(), flags=re.DOTALL)
                 
                 data = json.loads(cleaned_response)
@@ -707,21 +731,21 @@ class SSRPChatlogCog(commands.Cog, name="SSRPChatlog"):
                 return result
         except Exception as e:
             logger.warning(f"SPOILER: OpenRouter Gagal: {e}")
-            raise e # Lemparkan error lagi
+            raise e
 
-    # --- [PERBAIKAN] Logika Fallback AI ---
+    # --- [PERBAIKAN] Logika Fallback AI dengan AgentRouter ---
     async def generate_dialogs_with_ai(
         self,
         images_bytes_list: List[bytes],
         info_data: Dict,
         dialog_counts: List[int],
         language: str,
-        processing_msg: discord.Message, # Untuk update status
-        user_mention: str # Untuk update status
+        processing_msg: discord.Message, 
+        user_mention: str
     ) -> Tuple[List[List[str]], str]:
-        """Generate dialog SSRP SAMP dengan fallback AI (Prioritas OpenRouter)"""
+        """Generate dialog SSRP SAMP dengan fallback AI (Prioritas OpenRouter -> AgentRouter)"""
 
-        # --- Setup prompt dan image content (hanya gambar pertama) ---
+        # --- Setup prompt dan image content ---
         base64_img = base64.b64encode(images_bytes_list[0]).decode('utf-8')
         image_content_openai = {
             "type": "image_url",
@@ -734,7 +758,6 @@ class SSRPChatlogCog(commands.Cog, name="SSRPChatlog"):
             char_names_raw = [line.split('(')[0].strip() for line in char_details.split('\n') if line.strip()]; char_names_raw = [re.sub(r"[^A-Za-z\s]+", "", name).strip() for name in char_names_raw if name]
         char_names_formatted = [name.replace(' ', '_') for name in char_names_raw if name]
 
-        # Prompt ringkas
         prompt = f"""
         Anda adalah penulis dialog SSRP server SAMP ahli.
         Konteks: Karakter={info_data.get('detail_karakter', 'N/A')} (AI: {', '.join(char_names_formatted)}), Skenario={info_data.get('skenario', 'N/A')}, Bahasa={language}, Jml Gbr={len(images_bytes_list)}
@@ -759,19 +782,31 @@ class SSRPChatlogCog(commands.Cog, name="SSRPChatlog"):
         # --- Coba OpenRouter (Prioritas 1) ---
         if self.openrouter_key_cycler:
             try:
-                await processing_msg.edit(content=f"🧠 {user_mention}, Mencoba OpenRouter (Prioritas)...")
+                await processing_msg.edit(content=f"🧠 {user_mention}, Mencoba OpenRouter (Prioritas 1)...")
                 key = next(self.openrouter_key_cycler)
                 dialogs_list = await self._generate_with_openrouter(key, prompt, image_content_openai)
                 if dialogs_list: ai_used = "OpenRouter"
             except Exception as e:
                  logger.error(f"====== SSRP: OPENROUTER GAGAL: {e} ======") 
-                 await processing_msg.edit(content=f"⚠️ {user_mention}, OpenRouter (Prioritas) gagal... Mencoba OpenAI...")
+                 await processing_msg.edit(content=f"⚠️ {user_mention}, OpenRouter gagal... Mencoba AgentRouter...")
                  await asyncio.sleep(1)
 
-        # --- Coba OpenAI (Fallback 1) ---
+        # --- Coba AgentRouter (Prioritas 2) ---
+        if not dialogs_list and self.agentrouter_key_cycler:
+            try:
+                await processing_msg.edit(content=f"🧠 {user_mention}, Mencoba AgentRouter (Prioritas 2)...")
+                key = next(self.agentrouter_key_cycler)
+                dialogs_list = await self._generate_with_agentrouter(key, prompt, image_content_openai)
+                if dialogs_list: ai_used = "AgentRouter"
+            except Exception as e:
+                 logger.error(f"====== SSRP: AGENTROUTER GAGAL: {e} ======") 
+                 await processing_msg.edit(content=f"⚠️ {user_mention}, AgentRouter gagal (mungkin tidak support vision)... Mencoba OpenAI...")
+                 await asyncio.sleep(1)
+
+        # --- Coba OpenAI (Fallback 1 / Prioritas 3) ---
         if not dialogs_list and self.openai_key_cycler:
             try:
-                await processing_msg.edit(content=f"🧠 {user_mention}, Mencoba OpenAI...")
+                await processing_msg.edit(content=f"🧠 {user_mention}, Mencoba OpenAI (Rate Limit mungkin terjadi)...")
                 key = next(self.openai_key_cycler)
                 dialogs_list = await self._generate_with_openai(key, prompt, image_content_openai)
                 if dialogs_list: ai_used = "OpenAI"
@@ -780,7 +815,7 @@ class SSRPChatlogCog(commands.Cog, name="SSRPChatlog"):
                  await processing_msg.edit(content=f"⚠️ {user_mention}, OpenAI gagal... Mencoba Gemini...")
                  await asyncio.sleep(1)
 
-        # --- Coba Gemini (Fallback 2) ---
+        # --- Coba Gemini (Fallback 2 / Prioritas 4) ---
         if not dialogs_list and self.gemini_key_cycler:
             try:
                 await processing_msg.edit(content=f"🧠 {user_mention}, Mencoba Gemini...")
@@ -792,13 +827,11 @@ class SSRPChatlogCog(commands.Cog, name="SSRPChatlog"):
                  await processing_msg.edit(content=f"⚠️ {user_mention}, Gemini gagal... Mencoba DeepSeek...")
                  await asyncio.sleep(1)
         
-        # --- Coba DeepSeek (Fallback 3 - Text Only) ---
-        # Ini adalah fallback terakhir jika semua model vision gagal.
+        # --- Coba DeepSeek (Fallback 3 / Prioritas 5 - Text Only) ---
         if not dialogs_list and self.deepseek_key_cycler:
             try:
                 await processing_msg.edit(content=f"🧠 {user_mention}, Mencoba DeepSeek (Hanya Teks)...")
                 key = next(self.deepseek_key_cycler)
-                # Kirim prompt tanpa gambar (None)
                 dialogs_list = await self._generate_with_deepseek(key, prompt, None) 
                 if dialogs_list: ai_used = "DeepSeek (Text-Only)"
             except Exception as e:
@@ -809,7 +842,7 @@ class SSRPChatlogCog(commands.Cog, name="SSRPChatlog"):
         # --- Jika semua gagal ---
         if not dialogs_list:
             logger.error("Semua API AI gagal untuk SSRP Chatlog setelah fallback.")
-            raise Exception("Semua layanan AI (OpenRouter, OpenAI, Gemini, DeepSeek) gagal dihubungi atau error.")
+            raise Exception("Semua layanan AI (OpenRouter, AgentRouter, OpenAI, Gemini, DeepSeek) gagal dihubungi atau error.")
 
         # Padding/Truncating
         while len(dialogs_list) < len(images_bytes_list):
@@ -817,7 +850,7 @@ class SSRPChatlogCog(commands.Cog, name="SSRPChatlog"):
         dialogs_list = dialogs_list[:len(images_bytes_list)]
 
         logger.info(f"AI ({ai_used}) generated dialogs for {len(dialogs_list)} images in '{language}'.")
-        return dialogs_list, ai_used # Kembalikan AI yang berhasil digunakan
+        return dialogs_list, ai_used
 
 
     async def add_dialogs_to_image(
@@ -921,10 +954,8 @@ class SSRPChatlogCog(commands.Cog, name="SSRPChatlog"):
                     self.draw_text_with_multi_shadow(draw, (padding, y_pos), line, self.font)
                     y_pos += line_pixel_height
 
-            # Gabungkan gambar
             out_img = Image.alpha_composite(img, txt_overlay)
 
-            # Simpan sebagai PNG
             output = io.BytesIO()
             out_img.convert("RGB").save(output, format='PNG')
             output.seek(0)
@@ -932,14 +963,13 @@ class SSRPChatlogCog(commands.Cog, name="SSRPChatlog"):
 
         except Exception as e:
             logger.error(f"Error di add_dialogs_to_image: {e}", exc_info=True)
-            return image_bytes # Kembalikan asli jika gagal
+            return image_bytes
 
     def get_text_color(self, text: str) -> tuple:
         """Tentukan warna teks berdasarkan format SSRP/Chatlog Magician"""
         original_text = text
         text_lower = text.strip().lower()
 
-        # Urutan prioritas
         if text_lower.startswith('** [ch:'): return self.COLOR_RADIO
         if text_lower.startswith('** ['): return self.COLOR_DEP
         if text_lower.startswith('**'): return self.COLOR_DO
@@ -964,10 +994,8 @@ class SSRPChatlogCog(commands.Cog, name="SSRPChatlog"):
         text_color = self.get_text_color(text)
         cleaned_text = text
         
-        # --- PERBAIKAN: Definisikan text_lower ---
         text_lower = text.strip().lower()
 
-        # Ganti _ -> spasi untuk chat biasa (`says:` atau `[low]:`)
         match_say = re.match(r"^\s*([A-Za-z0-9_]+)\s+says:", text, re.IGNORECASE)
         match_low = re.match(r"^\s*([A-Za-z0-9_]+)\s+\[low\]:", text, re.IGNORECASE)
 
@@ -985,7 +1013,6 @@ class SSRPChatlogCog(commands.Cog, name="SSRPChatlog"):
             if not rest_of_line.startswith(' '):
                  cleaned_text = f"{name} [low]: {rest_of_line.lstrip()}"
 
-        # Ganti _ -> spasi untuk /me (format `* Nama_Pemain aksi`)
         elif text.startswith('* ') and ' (( ' not in text and ' [ch:' not in text and ' [' not in text_lower:
             parts = text.split(' ', 2)
             if len(parts) >= 3:
@@ -996,14 +1023,11 @@ class SSRPChatlogCog(commands.Cog, name="SSRPChatlog"):
                  name = parts[1].replace('_', ' ')
                  cleaned_text = f"* {name}"
 
-        # Gambar shadow
         for dx, dy in self.SHADOW_OFFSETS:
             draw.text((x + dx, y + dy), cleaned_text, font=font, fill=self.COLOR_SHADOW)
 
-        # Gambar teks utama
         draw.text(pos, cleaned_text, font=font, fill=text_color)
 
 # Setup function
 async def setup(bot):
-    # Pastikan bot meneruskan config saat memuat cog
     await bot.add_cog(SSRPChatlogCog(bot))
