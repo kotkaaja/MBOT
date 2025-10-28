@@ -806,8 +806,8 @@ ATURAN FORMAT KETAT ({language}):
    - Maksimal 45 kata
    - Contoh: `* John Doe mengangguk pelan sambil tersenyum`
 
-4. **/DO (DESKRIPSI)** - Format: `** Deskripsi kejadian (( Nama Karakter ))`
-   - DUA bintang (**)
+4. **/DO (DESKRIPSI)** - Format: `* Deskripsi kejadian (( Nama Karakter ))`
+   - Hanya Satu bintang (*)
    - Nama di AKHIR dalam tanda kurung (( ))
    - TANPA underscore di nama
    - Maksimal 50 kata
