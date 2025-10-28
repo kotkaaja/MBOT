@@ -6,21 +6,21 @@ import logging
 import io
 import base64
 from PIL import Image, ImageDraw, ImageFont, ImageOps
-from openai import AsyncOpenAI # Untuk OpenAI & AgentRouter
-import httpx # Untuk DeepSeek & OpenRouter
-import google.generativeai as genai # Untuk Gemini
+from openai import AsyncOpenAI
+import httpx
+import google.generativeai as genai
 from typing import List, Dict, Optional, Tuple
 import asyncio
 import re
 import os
 import json
-import textwrap # Import textwrap untuk word wrapping
-import itertools # Import untuk key cycler
+import textwrap
+import itertools
 
 logger = logging.getLogger(__name__)
 
 # ============================
-# MODAL & VIEW COMPONENTS
+# MODAL & VIEW COMPONENTS (Tidak Berubah)
 # ============================
 
 class SSRPInfoModal(ui.Modal, title="Informasi Bersama untuk SSRP"):
@@ -109,7 +109,7 @@ class DialogSettingsView(ui.View):
         self.info_data = info_data
         self.dialog_counts = [5] * len(images)
         self.positions = ["bawah"] * len(images)
-        self.background_styles = ["transparent"] * len(images) # Default transparent
+        self.background_styles = ["transparent"] * len(images)
         self.current_image_index = 0
 
         self.update_ui()
@@ -244,7 +244,7 @@ class FinishButton(ui.Button):
 
 
 # ============================
-# COG UTAMA (REVISED WITH MULTI-AI)
+# COG UTAMA (DIPERBAIKI)
 # ============================
 
 class SSRPChatlogCog(commands.Cog, name="SSRPChatlog"):
@@ -254,7 +254,7 @@ class SSRPChatlogCog(commands.Cog, name="SSRPChatlog"):
         self.bot = bot
         self.config = bot.config
 
-        # --- Setup API Clients & Key Cyclers ---
+        # Setup API Clients & Key Cyclers
         self.openai_key_cycler = None
         if hasattr(self.config, 'OPENAI_API_KEYS') and self.config.OPENAI_API_KEYS:
             self.openai_key_cycler = itertools.cycle(self.config.OPENAI_API_KEYS)
@@ -276,7 +276,6 @@ class SSRPChatlogCog(commands.Cog, name="SSRPChatlog"):
         else:
             logger.warning("⚠️ Gemini API keys (GEMINI_API_KEYS) tidak ditemukan di config.")
 
-        # --- [BARU] Setup OpenRouter ---
         self.openrouter_key_cycler = None
         if hasattr(self.config, 'OPENROUTER_API_KEY') and self.config.OPENROUTER_API_KEY:
             self.openrouter_key_cycler = itertools.cycle([self.config.OPENROUTER_API_KEY]) 
@@ -288,39 +287,40 @@ class SSRPChatlogCog(commands.Cog, name="SSRPChatlog"):
         else:
             logger.warning("⚠️ OpenRouter API key (OPENROUTER_API_KEY) tidak ditemukan di config.")
             
-        # --- [BARU] Setup AgentRouter ---
         self.agentrouter_key_cycler = None
         if hasattr(self.config, 'AGENTROUTER_API_KEY') and self.config.AGENTROUTER_API_KEY:
             self.agentrouter_key_cycler = itertools.cycle([self.config.AGENTROUTER_API_KEY])
             logger.info(f"✅ AgentRouter key dimuat untuk SSRP Chatlog.")
         else:
             logger.warning("⚠️ AgentRouter API key (AGENTROUTER_API_KEY) tidak ditemukan di config.")
-        # --- End Setup API ---
 
+        # ===== STYLING SETTINGS (DIPERBAIKI) =====
+        self.FONT_SIZE = 13  # Dinaikkan dari 12 untuk ketajaman
+        self.LINE_HEIGHT_ADD = 4  # Sedikit ditambah
+        self.FONT_PATH = self._find_font(["arial.ttf", "Arial.ttf", "arialbd.ttf", "LiberationSans-Regular.ttf", "DejaVuSans.ttf"])
 
-        # ===== STYLING SETTINGS =====
-        self.FONT_SIZE = 12
-        self.LINE_HEIGHT_ADD = 3 
-        self.FONT_PATH = self._find_font(["arial.ttf", "Arial.ttf", "LiberationSans-Regular.ttf", "DejaVuSans.ttf"])
-
-        # Warna teks
-        self.COLOR_CHAT = (255, 255, 255); self.COLOR_ME = (194, 162, 218)
-        self.COLOR_DO = (153, 204, 255); self.COLOR_WHISPER = (255, 255, 1)
-        self.COLOR_LOWCHAT = (187, 187, 187); self.COLOR_DEATH = (255, 0, 0)
-        self.COLOR_YELLOW = (255, 255, 0); self.COLOR_PALEYELLOW = (255, 236, 139)
-        self.COLOR_GREY = (187, 187, 187); self.COLOR_GREEN = (51, 170, 51)
-        self.COLOR_MONEY = (0, 128, 0); self.COLOR_NEWS = (16, 244, 65)
-        self.COLOR_RADIO = self.COLOR_PALEYELLOW; self.COLOR_DEP = (251, 132, 131)
+        # Warna teks (DIPERBAIKI: /do sama dengan /me)
+        self.COLOR_CHAT = (255, 255, 255)
+        self.COLOR_ME = (194, 162, 218)  # Ungu muda
+        self.COLOR_DO = (194, 162, 218)  # SAMA DENGAN /me (bukan biru lagi)
+        self.COLOR_WHISPER = (255, 255, 1)
+        self.COLOR_LOWCHAT = (187, 187, 187)
+        self.COLOR_DEATH = (255, 0, 0)
+        self.COLOR_YELLOW = (255, 255, 0)
+        self.COLOR_PALEYELLOW = (255, 236, 139)
+        self.COLOR_GREY = (187, 187, 187)
+        self.COLOR_GREEN = (51, 170, 51)
+        self.COLOR_MONEY = (0, 128, 0)
         self.COLOR_OOC = (170, 170, 170)
 
-        # Text shadow settings
-        self.COLOR_SHADOW = (0, 0, 0)
-        self.SHADOW_OFFSETS = [(-1, -1), (1, -1), (-1, 1), (1, 1)]
+        # Text shadow settings (DIPERBAIKI: shadow lebih tegas)
+        self.COLOR_SHADOW = (0, 0, 0, 200)  # Shadow lebih gelap
+        self.SHADOW_OFFSETS = [(-1, -1), (1, -1), (-1, 1), (1, 1), (0, -1), (-1, 0), (1, 0), (0, 1)]  # 8 arah
 
         # Background overlay
         self.BG_COLOR = (0, 0, 0, 180)
 
-        # Muat font
+        # Muat font dengan antialiasing
         try:
             self.font = ImageFont.truetype(self.FONT_PATH, self.FONT_SIZE)
             logger.info(f"✅ Font '{os.path.basename(self.FONT_PATH)}' ({self.FONT_SIZE}pt) dimuat untuk SSRP.")
@@ -346,8 +346,8 @@ class SSRPChatlogCog(commands.Cog, name="SSRPChatlog"):
                 '/usr/share/fonts',
                 '/usr/local/share/fonts',
                 os.path.expanduser('~/.fonts'),
-                '/Library/Fonts', # macOS
-                os.path.expanduser('~/Library/Fonts') # macOS user
+                '/Library/Fonts',
+                os.path.expanduser('~/Library/Fonts')
             ])
 
         for name in font_names:
@@ -368,11 +368,49 @@ class SSRPChatlogCog(commands.Cog, name="SSRPChatlog"):
         logger.warning(f"Tidak dapat menemukan font: {font_names} di direktori {font_dirs}.")
         return font_names[0]
 
+    # ===== FUNGSI CROP IMAGE KE RASIO 4:3 (BARU) =====
+    def crop_to_4_3_ratio(self, img_bytes: bytes) -> bytes:
+        """Crop gambar ke rasio 4:3 (800x600) jika bukan ukuran tersebut"""
+        try:
+            img = Image.open(io.BytesIO(img_bytes))
+            original_width, original_height = img.size
+            
+            # Jika sudah 800x600, langsung return
+            if original_width == 800 and original_height == 600:
+                return img_bytes
+            
+            target_ratio = 4 / 3
+            current_ratio = original_width / original_height
+            
+            # Crop ke rasio 4:3
+            if current_ratio > target_ratio:
+                # Gambar terlalu lebar, crop kiri-kanan
+                new_width = int(original_height * target_ratio)
+                left = (original_width - new_width) // 2
+                img_cropped = img.crop((left, 0, left + new_width, original_height))
+            else:
+                # Gambar terlalu tinggi, crop atas-bawah
+                new_height = int(original_width / target_ratio)
+                top = (original_height - new_height) // 2
+                img_cropped = img.crop((0, top, original_width, top + new_height))
+            
+            # Resize ke 800x600
+            img_resized = img_cropped.resize((800, 600), Image.Resampling.LANCZOS)
+            
+            output = io.BytesIO()
+            img_resized.save(output, format='PNG')
+            output.seek(0)
+            logger.info(f"✅ Gambar di-crop dari {original_width}x{original_height} ke 800x600")
+            return output.getvalue()
+            
+        except Exception as e:
+            logger.error(f"Error saat crop gambar: {e}")
+            return img_bytes
+
     @commands.command(name="buatssrp", aliases=["createssrp"])
     async def create_ssrp(self, ctx: commands.Context):
         """Buat SSRP Chatlog dari gambar dengan AI (gaya Chatlog Magician)"""
 
-        # --- [PERBAIKAN] Cek ketersediaan AI (termasuk OpenRouter & AgentRouter) ---
         if not self.openai_key_cycler and not self.deepseek_key_cycler and \
            not self.gemini_key_cycler and not self.openrouter_key_cycler and \
            not self.agentrouter_key_cycler:
@@ -386,11 +424,14 @@ class SSRPChatlogCog(commands.Cog, name="SSRPChatlog"):
                 color=discord.Color.blue()
             )
             embed.add_field(name="Langkah", value="1. Upload gambar\n2. Ketik `!buatssrp` di caption\n3. Ikuti instruksi di tombol & form", inline=False)
+            embed.add_field(name="📏 Format Gambar", value="Gambar akan otomatis di-crop ke rasio 4:3 (800x600) untuk hasil optimal.", inline=False)
             await ctx.send(embed=embed)
             return
 
         images_bytes_list = []
-        valid_extensions = ('.png', '.jpg', '.jpeg'); count = 0
+        valid_extensions = ('.png', '.jpg', '.jpeg')
+        count = 0
+        
         for attachment in ctx.message.attachments:
             if count >= 10: break
             if attachment.filename.lower().endswith(valid_extensions):
@@ -399,11 +440,13 @@ class SSRPChatlogCog(commands.Cog, name="SSRPChatlog"):
                     continue
                 try:
                     img_bytes = await attachment.read()
-                    images_bytes_list.append(img_bytes)
+                    # CROP GAMBAR KE RASIO 4:3 (BARU)
+                    img_bytes_cropped = self.crop_to_4_3_ratio(img_bytes)
+                    images_bytes_list.append(img_bytes_cropped)
                     count += 1
                 except Exception as e:
-                    logger.error(f"Gagal download gambar '{attachment.filename}': {e}")
-                    await ctx.send(f"❌ Gagal mengunduh `{attachment.filename}`.")
+                    logger.error(f"Gagal download/crop gambar '{attachment.filename}': {e}")
+                    await ctx.send(f"❌ Gagal memproses `{attachment.filename}`.")
             
         if not images_bytes_list:
             await ctx.send("❌ Tidak ada gambar valid (.png/.jpg/.jpeg) yang ditemukan atau berhasil diunduh!")
@@ -415,23 +458,24 @@ class SSRPChatlogCog(commands.Cog, name="SSRPChatlog"):
 
         async def button_callback(interaction: discord.Interaction):
             if interaction.user.id != ctx.author.id:
-                await interaction.response.send_message("❌ Hanya peminta asli yang bisa mengisi!", ephemeral=True); return
+                await interaction.response.send_message("❌ Hanya peminta asli yang bisa mengisi!", ephemeral=True)
+                return
             await interaction.response.send_modal(modal)
             button.disabled = True
             try:
                 await interaction.message.edit(view=view)
-            except discord.NotFound: pass
+            except discord.NotFound:
+                pass
 
         button.callback = button_callback
         view.add_item(button)
 
         embed_start = discord.Embed(
-            title="✅ Gambar Diterima",
-            description=f"`{len(images_bytes_list)}` gambar siap diproses. Klik tombol di bawah untuk melanjutkan.",
+            title="✅ Gambar Diterima & Di-crop",
+            description=f"`{len(images_bytes_list)}` gambar siap diproses (800x600). Klik tombol di bawah untuk melanjutkan.",
             color=discord.Color.green()
         )
         await ctx.send(embed=embed_start, view=view)
-
 
     async def process_ssrp(
         self,
@@ -465,26 +509,13 @@ class SSRPChatlogCog(commands.Cog, name="SSRPChatlog"):
 
             language = info_data.get('language', 'Bahasa Indonesia baku')
 
-            # --- Panggil Fungsi AI dengan Fallback ---
             all_dialogs_raw, ai_used = await self.generate_dialogs_with_ai(
                 images_bytes_list, info_data, dialog_counts, language, 
                 processing_msg, interaction.user.mention
             )
-            # --- Akhir Panggil AI ---
-
 
             processed_images_bytes = []
             for idx, (img_bytes, raw_dialogs, position, bg_style) in enumerate(zip(images_bytes_list, all_dialogs_raw, positions, background_styles)):
-
-                # --- Pengecekan Ukuran Gambar ---
-                try:
-                    img_check = Image.open(io.BytesIO(img_bytes))
-                    if img_check.width != 800 or img_check.height != 600:
-                        warnings.append(f"Gambar {idx+1} ({img_check.width}x{img_check.height}) bukan 800x600, hasil mungkin kurang optimal.")
-                    img_check.close()
-                except Exception as img_err:
-                    logger.warning(f"Gagal memeriksa ukuran gambar {idx+1}: {img_err}")
-                # --- Akhir Pengecekan ---
 
                 limited_dialogs = raw_dialogs[:dialog_counts[idx]]
 
@@ -508,7 +539,6 @@ class SSRPChatlogCog(commands.Cog, name="SSRPChatlog"):
 
             await processing_msg.edit(content=final_content)
 
-            # Kirim hasil dalam chunk (output PNG)
             for i in range(0, len(processed_images_bytes), 10):
                 chunk = processed_images_bytes[i:i+10]
                 files = [
@@ -541,7 +571,7 @@ class SSRPChatlogCog(commands.Cog, name="SSRPChatlog"):
             else:
                  await interaction.channel.send(content=f"{interaction.user.mention}, {error_message}")
 
-    # --- Fungsi Helper Pemanggilan AI ---
+    # ===== FUNGSI AI DENGAN PROMPT DIPERBAIKI =====
     
     async def _generate_with_openai(self, api_key: str, prompt: str, image_content: Dict) -> Optional[List[List[str]]]:
         """Coba generate dialog dengan OpenAI"""
@@ -570,18 +600,16 @@ class SSRPChatlogCog(commands.Cog, name="SSRPChatlog"):
                  raise Exception(f"OpenAI Rate Limit. Mencoba AI lain...") from e
             raise e
 
-    # --- [BARU] Fungsi untuk AgentRouter ---
     async def _generate_with_agentrouter(self, api_key: str, prompt: str, image_content: Dict) -> Optional[List[List[str]]]:
         """Coba generate dialog dengan Agent Router (OpenAI Compatible)"""
         try:
-            # Menggunakan library OpenAI tetapi mengganti base_url
             client = AsyncOpenAI(
                 api_key=api_key,
-                base_url="https://agentrouter.org/v1", # URL dari user
+                base_url="https://agentrouter.org/v1",
                 timeout=45.0
             )
             response = await client.chat.completions.create(
-                model="gpt-4o-mini", # Asumsikan AgentRouter bisa merutekan model ini
+                model="gpt-4o-mini",
                 messages=[
                     {"role": "system", "content": "Anda adalah penulis SSRP ahli. Output HANYA JSON."},
                     {"role": "user", "content": [{"type": "text", "text": prompt}, image_content]}
@@ -598,9 +626,8 @@ class SSRPChatlogCog(commands.Cog, name="SSRPChatlog"):
                  raise ValueError("Format JSON dari AgentRouter tidak valid (bukan list).")
             return result
         except Exception as e:
-            # Log error spesifik, terutama jika 401 (API Key salah) atau 500
             logger.warning(f"SPOILER: AgentRouter Gagal: {e}")
-            raise e # Lemparkan error lagi agar ditangkap oleh generate_dialogs_with_ai
+            raise e
 
     async def _generate_with_deepseek(self, api_key: str, prompt: str, image_content: Optional[Dict]) -> Optional[List[List[str]]]:
         """Coba generate dialog dengan DeepSeek (Hanya Teks)"""
@@ -608,7 +635,7 @@ class SSRPChatlogCog(commands.Cog, name="SSRPChatlog"):
             async with httpx.AsyncClient(timeout=45.0) as client:
                 payload = {
                     "model": "deepseek-chat",
-                    "messages": [{"role": "user", "content": prompt}], # Hanya teks
+                    "messages": [{"role": "user", "content": prompt}],
                     "response_format": {"type": "json_object"},
                     "temperature": 0.7,
                     "max_tokens": 3000
@@ -639,7 +666,6 @@ class SSRPChatlogCog(commands.Cog, name="SSRPChatlog"):
         """Coba generate dialog dengan Gemini"""
         try:
             genai.configure(api_key=api_key)
-            # --- [PERBAIKAN] Ganti nama model ke 'latest' untuk menghindari 404 ---
             model = genai.GenerativeModel('gemini-1.5-flash-latest')
 
             gemini_content = [prompt] 
@@ -682,7 +708,6 @@ class SSRPChatlogCog(commands.Cog, name="SSRPChatlog"):
             logger.warning(f"SPOILER: Gemini Gagal: {e}")
             raise e
 
-    # --- [BARU] Fungsi untuk OpenRouter ---
     async def _generate_with_openrouter(self, api_key: str, prompt: str, image_content: Optional[Dict]) -> Optional[List[List[str]]]:
         """Coba generate dialog dengan OpenRouter (Vision)"""
         if not image_content or image_content['type'] != 'image_url':
@@ -693,7 +718,7 @@ class SSRPChatlogCog(commands.Cog, name="SSRPChatlog"):
         try:
             async with httpx.AsyncClient(timeout=60.0) as client:
                 payload = {
-                    "model": "nvidia/nemotron-nano-12b-v2-vl:free", # Model vision gratis
+                    "model": "nvidia/nemotron-nano-12b-v2-vl:free",
                     "messages": [
                         {
                             "role": "user",
@@ -733,7 +758,7 @@ class SSRPChatlogCog(commands.Cog, name="SSRPChatlog"):
             logger.warning(f"SPOILER: OpenRouter Gagal: {e}")
             raise e
 
-    # --- [PERBAIKAN] Logika Fallback AI dengan AgentRouter ---
+    # ===== PROMPT AI YANG DIPERBAIKI =====
     async def generate_dialogs_with_ai(
         self,
         images_bytes_list: List[bytes],
@@ -743,9 +768,8 @@ class SSRPChatlogCog(commands.Cog, name="SSRPChatlog"):
         processing_msg: discord.Message, 
         user_mention: str
     ) -> Tuple[List[List[str]], str]:
-        """Generate dialog SSRP SAMP dengan fallback AI (Prioritas OpenRouter -> AgentRouter)"""
+        """Generate dialog SSRP SAMP dengan fallback AI - PROMPT DIPERBAIKI"""
 
-        # --- Setup prompt dan image content ---
         base64_img = base64.b64encode(images_bytes_list[0]).decode('utf-8')
         image_content_openai = {
             "type": "image_url",
@@ -753,33 +777,90 @@ class SSRPChatlogCog(commands.Cog, name="SSRPChatlog"):
         }
         
         dialog_requirements = "\n".join([f"Gambar {i+1}: HARUS berisi TEPAT {count} baris dialog." for i, count in enumerate(dialog_counts)])
-        char_details = info_data.get('detail_karakter', ''); char_names_raw = re.findall(r"([A-Za-z'_]+(?: [A-Za-z'_]+)?)", char_details)
+        char_details = info_data.get('detail_karakter', '')
+        char_names_raw = re.findall(r"([A-Za-z']+(?:\s+[A-Za-z']+)*)", char_details)
         if not char_names_raw:
-            char_names_raw = [line.split('(')[0].strip() for line in char_details.split('\n') if line.strip()]; char_names_raw = [re.sub(r"[^A-Za-z\s]+", "", name).strip() for name in char_names_raw if name]
-        char_names_formatted = [name.replace(' ', '_') for name in char_names_raw if name]
+            char_names_raw = [line.split('(')[0].strip() for line in char_details.split('\n') if line.strip()]
+            char_names_raw = [re.sub(r"[^A-Za-z\s]+", "", name).strip() for name in char_names_raw if name]
+        char_names_formatted = [name.replace(' ', ' ') for name in char_names_raw if name]  # TANPA underscore
 
+        # ===== PROMPT YANG SANGAT KETAT (DIPERBAIKI) =====
         prompt = f"""
-        Anda adalah penulis dialog SSRP server SAMP ahli.
-        Konteks: Karakter={info_data.get('detail_karakter', 'N/A')} (AI: {', '.join(char_names_formatted)}), Skenario={info_data.get('skenario', 'N/A')}, Bahasa={language}, Jml Gbr={len(images_bytes_list)}
-        Kebutuhan Baris:\n{dialog_requirements}
-        ATURAN FORMAT ({language}):
-        1. Chat: `Nama_Karakter says: Teks.`
-        2. Low: `Nama_Karakter [low]: Teks.`
-        3. Me: `* Nama_Karakter aksi` (Tanpa titik akhir)
-        4. Do: `** Deskripsi (( Nama_Karakter ))` (DUA bintang)
-        5. Whisper: `Nama_Karakter whispers: Teks` / `... (phone): ...`
-        6. Radio/Dept: `** [Dept] Nama_Karakter: Teks` / `** [CH:X] Nama_Karakter: Teks`
-        7. Nama AI: {', '.join(char_names_formatted)}
-        8. Adaptasi kata kunci format (says, *, dll) ke {language} jika bukan Indo/English. /do tetap `** ... (( Nama ))`.
-        OUTPUT HANYA JSON: {{ "dialogs_per_image": [ ["dialog gbr1"], ["dialog gbr2"], ... ] }}
-        INSTRUKSI: Buat dialog natural, logis, sesuai gambar#1 & skenario. Lanjutkan cerita antar gambar. Jumlah baris TEPAT. Variasikan format.
-        """
-        # --- End Setup Prompt ---
+Anda adalah penulis dialog SSRP server SAMP profesional. PATUHI ATURAN INI:
+
+KONTEKS:
+- Karakter: {info_data.get('detail_karakter', 'N/A')}
+- Nama AI (TANPA underscore): {', '.join(char_names_formatted)}
+- Skenario: {info_data.get('skenario', 'N/A')}
+- Bahasa: {language}
+- Jumlah Gambar: {len(images_bytes_list)}
+
+KEBUTUHAN BARIS PER GAMBAR:
+{dialog_requirements}
+
+ATURAN FORMAT KETAT ({language}):
+
+1. **CHAT BIASA** - Format: `Nama Karakter says: Teks dialog.`
+   - JANGAN tulis "Chat:" di depan
+   - Nama TANPA underscore (gunakan spasi)
+   - Maksimal 50 kata per dialog
+   - Contoh: `John Doe says: Halo, apa kabar?`
+
+2. **LOW CHAT** - Format: `Nama Karakter [low]: Teks dialog.`
+   - Nama TANPA underscore
+   - Maksimal 40 kata
+   - Contoh: `Jane Smith [low]: Psst, dengar ini.`
+
+3. **/ME (AKSI)** - Format: `* Nama Karakter aksi tanpa titik akhir`
+   - HANYA satu bintang (*)
+   - Nama di AWAL, lalu aksi
+   - TANPA titik di akhir
+   - TANPA underscore di nama
+   - Maksimal 45 kata
+   - Contoh: `* John Doe mengangguk pelan sambil tersenyum`
+
+4. **/DO (DESKRIPSI)** - Format: `** Deskripsi kejadian (( Nama Karakter ))`
+   - DUA bintang (**)
+   - Nama di AKHIR dalam tanda kurung (( ))
+   - TANPA underscore di nama
+   - Maksimal 50 kata
+   - Contoh: `** Angin sepoi-sepoi menerpa wajahnya dengan lembut (( Jane Smith ))`
+
+5. **WHISPER** - Format: `Nama Karakter whispers: Teks`
+   - Atau: `Nama Karakter (phone): Teks`
+   - Maksimal 40 kata
+   - Contoh: `John Doe whispers: Jangan bilang siapa-siapa ya.`
+
+6. **JANGAN GUNAKAN**:
+   - Radio format (`** [CH:X]`)
+   - Department format (`** [Dept]`)
+   - Format lain selain 5 di atas
+
+7. **PANJANG DIALOG**:
+   - Setiap baris maksimal 60 kata
+   - Jika ada dialog panjang, pecah jadi beberapa baris
+
+OUTPUT JSON:
+{{
+  "dialogs_per_image": [
+    ["dialog baris 1 gambar 1", "dialog baris 2 gambar 1", ...],
+    ["dialog baris 1 gambar 2", "dialog baris 2 gambar 2", ...],
+    ...
+  ]
+}}
+
+PENTING:
+- Nama karakter HARUS tanpa underscore (gunakan spasi)
+- Jumlah baris HARUS TEPAT sesuai kebutuhan
+- Dialog natural, logis, sesuai gambar pertama dan skenario
+- Variasikan format (jangan semua says)
+- Lanjutkan cerita antar gambar
+"""
 
         dialogs_list = None
         ai_used = "Tidak ada"
 
-        # --- Coba OpenRouter (Prioritas 1) ---
+        # Coba OpenRouter (Prioritas 1)
         if self.openrouter_key_cycler:
             try:
                 await processing_msg.edit(content=f"🧠 {user_mention}, Mencoba OpenRouter (Prioritas 1)...")
@@ -791,7 +872,7 @@ class SSRPChatlogCog(commands.Cog, name="SSRPChatlog"):
                  await processing_msg.edit(content=f"⚠️ {user_mention}, OpenRouter gagal... Mencoba AgentRouter...")
                  await asyncio.sleep(1)
 
-        # --- Coba AgentRouter (Prioritas 2) ---
+        # Coba AgentRouter (Prioritas 2)
         if not dialogs_list and self.agentrouter_key_cycler:
             try:
                 await processing_msg.edit(content=f"🧠 {user_mention}, Mencoba AgentRouter (Prioritas 2)...")
@@ -800,13 +881,13 @@ class SSRPChatlogCog(commands.Cog, name="SSRPChatlog"):
                 if dialogs_list: ai_used = "AgentRouter"
             except Exception as e:
                  logger.error(f"====== SSRP: AGENTROUTER GAGAL: {e} ======") 
-                 await processing_msg.edit(content=f"⚠️ {user_mention}, AgentRouter gagal (mungkin tidak support vision)... Mencoba OpenAI...")
+                 await processing_msg.edit(content=f"⚠️ {user_mention}, AgentRouter gagal... Mencoba OpenAI...")
                  await asyncio.sleep(1)
 
-        # --- Coba OpenAI (Fallback 1 / Prioritas 3) ---
+        # Coba OpenAI (Fallback 1)
         if not dialogs_list and self.openai_key_cycler:
             try:
-                await processing_msg.edit(content=f"🧠 {user_mention}, Mencoba OpenAI (Rate Limit mungkin terjadi)...")
+                await processing_msg.edit(content=f"🧠 {user_mention}, Mencoba OpenAI...")
                 key = next(self.openai_key_cycler)
                 dialogs_list = await self._generate_with_openai(key, prompt, image_content_openai)
                 if dialogs_list: ai_used = "OpenAI"
@@ -815,7 +896,7 @@ class SSRPChatlogCog(commands.Cog, name="SSRPChatlog"):
                  await processing_msg.edit(content=f"⚠️ {user_mention}, OpenAI gagal... Mencoba Gemini...")
                  await asyncio.sleep(1)
 
-        # --- Coba Gemini (Fallback 2 / Prioritas 4) ---
+        # Coba Gemini (Fallback 2)
         if not dialogs_list and self.gemini_key_cycler:
             try:
                 await processing_msg.edit(content=f"🧠 {user_mention}, Mencoba Gemini...")
@@ -827,7 +908,7 @@ class SSRPChatlogCog(commands.Cog, name="SSRPChatlog"):
                  await processing_msg.edit(content=f"⚠️ {user_mention}, Gemini gagal... Mencoba DeepSeek...")
                  await asyncio.sleep(1)
         
-        # --- Coba DeepSeek (Fallback 3 / Prioritas 5 - Text Only) ---
+        # Coba DeepSeek (Fallback 3)
         if not dialogs_list and self.deepseek_key_cycler:
             try:
                 await processing_msg.edit(content=f"🧠 {user_mention}, Mencoba DeepSeek (Hanya Teks)...")
@@ -839,10 +920,9 @@ class SSRPChatlogCog(commands.Cog, name="SSRPChatlog"):
                  await processing_msg.edit(content=f"⚠️ {user_mention}, DeepSeek gagal...")
                  await asyncio.sleep(1)
 
-        # --- Jika semua gagal ---
         if not dialogs_list:
             logger.error("Semua API AI gagal untuk SSRP Chatlog setelah fallback.")
-            raise Exception("Semua layanan AI (OpenRouter, AgentRouter, OpenAI, Gemini, DeepSeek) gagal dihubungi atau error.")
+            raise Exception("Semua layanan AI gagal dihubungi atau error.")
 
         # Padding/Truncating
         while len(dialogs_list) < len(images_bytes_list):
@@ -852,7 +932,7 @@ class SSRPChatlogCog(commands.Cog, name="SSRPChatlog"):
         logger.info(f"AI ({ai_used}) generated dialogs for {len(dialogs_list)} images in '{language}'.")
         return dialogs_list, ai_used
 
-
+    # ===== FUNGSI RENDER TEXT YANG DIPERBAIKI =====
     async def add_dialogs_to_image(
         self,
         image_bytes: bytes,
@@ -860,49 +940,58 @@ class SSRPChatlogCog(commands.Cog, name="SSRPChatlog"):
         position: str,
         background_style: str
     ) -> bytes:
-        """Tambahkan dialog ke gambar dengan styling & word wrap"""
+        """Tambahkan dialog ke gambar dengan styling SEMPURNA & word wrap ketat"""
         try:
             img = Image.open(io.BytesIO(image_bytes)).convert("RGBA")
             width, height = img.size
             txt_overlay = Image.new('RGBA', img.size, (255, 255, 255, 0))
             draw = ImageDraw.Draw(txt_overlay)
-            padding = 8
+            padding = 10
             max_text_width_px = width - (padding * 2)
 
             wrapped_dialog_lines = []
             
-            # --- Text Wrapping ---
+            # Text Wrapping yang lebih ketat
             for dialog in dialogs:
-                avg_char_width = self.font.getlength("a")
-                approx_chars_per_line = int(max_text_width_px / avg_char_width) if avg_char_width > 0 else 70 
-
-                lines = textwrap.wrap(dialog, width=max(10, approx_chars_per_line - 5), 
-                                     break_long_words=True, 
-                                     replace_whitespace=False,
-                                     drop_whitespace=False)
+                # Hitung lebar karakter rata-rata
+                avg_char_width = self.font.getlength("W")  # Gunakan huruf lebar
+                approx_chars_per_line = int(max_text_width_px / avg_char_width) if avg_char_width > 0 else 60
+                
+                # Wrap dengan batas karakter yang lebih konservatif
+                lines = textwrap.wrap(
+                    dialog, 
+                    width=max(10, approx_chars_per_line - 8),  # Lebih konservatif
+                    break_long_words=True,
+                    replace_whitespace=False,
+                    drop_whitespace=False
+                )
                 
                 if not lines:
                     lines = [dialog]
 
+                # Validasi lebar setiap line
                 final_lines = []
                 for line in lines:
-                    if self.font.getlength(line) > max_text_width_px:
-                        safe_chars = max(10, approx_chars_per_line - 10)
+                    actual_width = self.font.getlength(line)
+                    if actual_width > max_text_width_px:
+                        # Paksa pecah jika masih terlalu lebar
+                        safe_chars = max(10, int(len(line) * (max_text_width_px / actual_width)) - 5)
                         for i in range(0, len(line), safe_chars):
-                            final_lines.append(line[i:i + safe_chars])
+                            chunk = line[i:i + safe_chars]
+                            final_lines.append(chunk)
                     else:
                         final_lines.append(line)
                 
                 wrapped_dialog_lines.extend(final_lines)
 
-            # --- Hitung Tinggi & Posisi Y ---
+            # Hitung Tinggi & Posisi Y
             total_lines = len(wrapped_dialog_lines)
             line_pixel_height = self.FONT_SIZE + self.LINE_HEIGHT_ADD
-            total_dialog_height_pixels = (total_lines * line_pixel_height) - self.LINE_HEIGHT_ADD + (padding * 2)
+            total_dialog_height_pixels = (total_lines * line_pixel_height) + (padding * 2)
 
             y_coords = []
 
-            # --- Gambar Background (jika overlay) & Tentukan y_coords ---
+            # Gambar Background & Tentukan y_coords
             if background_style == "overlay":
                 if position == "atas":
                     bg_y_end = min(total_dialog_height_pixels, height)
@@ -912,32 +1001,34 @@ class SSRPChatlogCog(commands.Cog, name="SSRPChatlog"):
                     bg_y_start_rect = max(0, height - total_dialog_height_pixels)
                     draw.rectangle([(0, bg_y_start_rect), (width, height)], fill=self.BG_COLOR)
                     y_coords.append(bg_y_start_rect + padding)
-                else: # split
+                else:  # split
                     half_lines_idx = (total_lines + 1) // 2
                     top_lines = wrapped_dialog_lines[:half_lines_idx]
                     bottom_lines = wrapped_dialog_lines[half_lines_idx:]
 
-                    top_height_pixels = (len(top_lines) * line_pixel_height) - self.LINE_HEIGHT_ADD + (padding * 2) if top_lines else 0
+                    top_height_pixels = (len(top_lines) * line_pixel_height) + (padding * 2) if top_lines else 0
                     bg_top_end = min(top_height_pixels, height)
                     draw.rectangle([(0, 0), (width, bg_top_end)], fill=self.BG_COLOR)
                     y_coords.append(padding)
 
-                    bottom_height_pixels = (len(bottom_lines) * line_pixel_height) - self.LINE_HEIGHT_ADD + (padding * 2) if bottom_lines else 0
+                    bottom_height_pixels = (len(bottom_lines) * line_pixel_height) + (padding * 2) if bottom_lines else 0
                     bg_bottom_start_rect = max(0, height - bottom_height_pixels)
                     draw.rectangle([(0, bg_bottom_start_rect), (width, height)], fill=self.BG_COLOR)
                     y_coords.append(bg_bottom_start_rect + padding)
             
-            else: # background_style == "transparent"
-                 if position == "atas": y_coords.append(padding)
-                 elif position == "bawah": y_coords.append(max(padding, height - total_dialog_height_pixels + padding))
-                 else: # split transparent
+            else:  # transparent
+                 if position == "atas":
+                     y_coords.append(padding)
+                 elif position == "bawah":
+                     y_coords.append(max(padding, height - total_dialog_height_pixels + padding))
+                 else:  # split transparent
                      half_lines_idx = (total_lines + 1) // 2
                      y_coords.append(padding)
                      bottom_lines_count = total_lines - half_lines_idx
-                     bottom_height_pixels = (bottom_lines_count * line_pixel_height) - self.LINE_HEIGHT_ADD + (padding * 2) if bottom_lines_count > 0 else 0
+                     bottom_height_pixels = (bottom_lines_count * line_pixel_height) + (padding * 2) if bottom_lines_count > 0 else 0
                      y_coords.append(max(padding, height - bottom_height_pixels + padding))
 
-            # --- Draw Dialogs (dengan wrapping) ---
+            # Draw Dialogs
             if position == "split":
                 half_lines_idx = (total_lines + 1) // 2
                 y_pos_top = y_coords[0]
@@ -948,7 +1039,7 @@ class SSRPChatlogCog(commands.Cog, name="SSRPChatlog"):
                 for line in wrapped_dialog_lines[half_lines_idx:]:
                     self.draw_text_with_multi_shadow(draw, (padding, y_pos_bottom), line, self.font)
                     y_pos_bottom += line_pixel_height
-            else: # atas atau bawah
+            else:  # atas atau bawah
                 y_pos = y_coords[0]
                 for line in wrapped_dialog_lines:
                     self.draw_text_with_multi_shadow(draw, (padding, y_pos), line, self.font)
@@ -957,7 +1048,7 @@ class SSRPChatlogCog(commands.Cog, name="SSRPChatlog"):
             out_img = Image.alpha_composite(img, txt_overlay)
 
             output = io.BytesIO()
-            out_img.convert("RGB").save(output, format='PNG')
+            out_img.convert("RGB").save(output, format='PNG', quality=95)  # Quality tinggi
             output.seek(0)
             return output.getvalue()
 
@@ -965,39 +1056,48 @@ class SSRPChatlogCog(commands.Cog, name="SSRPChatlog"):
             logger.error(f"Error di add_dialogs_to_image: {e}", exc_info=True)
             return image_bytes
 
+    # ===== FUNGSI WARNA & RENDER TEXT YANG DIPERBAIKI =====
     def get_text_color(self, text: str) -> tuple:
-        """Tentukan warna teks berdasarkan format SSRP/Chatlog Magician"""
-        original_text = text
+        """Tentukan warna teks - DIPERBAIKI (DO sama dengan ME)"""
         text_lower = text.strip().lower()
 
-        if text_lower.startswith('** [ch:'): return self.COLOR_RADIO
-        if text_lower.startswith('** ['): return self.COLOR_DEP
-        if text_lower.startswith('**'): return self.COLOR_DO
-        if text_lower.startswith('*'): return self.COLOR_ME
+        # /do (DUA bintang, nama di akhir)
+        if text.startswith('**') and '(( ' in text and ' ))' in text:
+            return self.COLOR_DO  # Warna SAMA dengan /me
+
+        # /me (SATU bintang, nama di awal)
+        if text.startswith('* ') and not text.startswith('** '):
+            return self.COLOR_ME
         
-        if ' whispers:' in text_lower: return self.COLOR_WHISPER
-        if re.search(r'\(\s*phone\s*\):', text_lower): return self.COLOR_WHISPER
-        if ':o<' in text: return self.COLOR_WHISPER
+        # Whisper
+        if ' whispers:' in text_lower or '(phone):' in text_lower or ':o<' in text:
+            return self.COLOR_WHISPER
         
-        if ' [low]:' in text_lower: return self.COLOR_LOWCHAT
-        if '[san interview]' in text_lower: return self.COLOR_NEWS
-        if ' says:' in text_lower: return self.COLOR_CHAT
+        # Low chat
+        if ' [low]:' in text_lower:
+            return self.COLOR_LOWCHAT
         
-        if ', $' in text or 'you have received $' in text_lower: return self.COLOR_GREY
-        if '(( ' in text and ' ))' in text: return self.COLOR_OOC
+        # Chat biasa
+        if ' says:' in text_lower:
+            return self.COLOR_CHAT
+        
+        # OOC
+        if '(( ' in text and ' ))' in text and not text.startswith('**'):
+            return self.COLOR_OOC
 
         return self.COLOR_CHAT
 
     def draw_text_with_multi_shadow(self, draw: ImageDraw.ImageDraw, pos: Tuple[int, int], text: str, font: ImageFont.FreeTypeFont):
-        """Gambar teks dengan shadow hitam di 4 arah dan penyesuaian nama"""
+        """Gambar teks dengan shadow 8 arah dan penyesuaian nama TANPA underscore"""
         x, y = pos
         text_color = self.get_text_color(text)
         cleaned_text = text
         
-        text_lower = text.strip().lower()
-
+        # Hapus underscore dari nama di semua format
+        # Format: "Nama_Karakter says:" -> "Nama Karakter says:"
         match_say = re.match(r"^\s*([A-Za-z0-9_]+)\s+says:", text, re.IGNORECASE)
         match_low = re.match(r"^\s*([A-Za-z0-9_]+)\s+\[low\]:", text, re.IGNORECASE)
+        match_whisper = re.match(r"^\s*([A-Za-z0-9_]+)\s+whispers:", text, re.IGNORECASE)
 
         if match_say:
             name = match_say.group(1).replace('_', ' ')
@@ -1013,7 +1113,15 @@ class SSRPChatlogCog(commands.Cog, name="SSRPChatlog"):
             if not rest_of_line.startswith(' '):
                  cleaned_text = f"{name} [low]: {rest_of_line.lstrip()}"
 
-        elif text.startswith('* ') and ' (( ' not in text and ' [ch:' not in text and ' [' not in text_lower:
+        elif match_whisper:
+            name = match_whisper.group(1).replace('_', ' ')
+            rest_of_line = text[match_whisper.end():]
+            cleaned_text = f"{name} whispers:{rest_of_line}"
+            if not rest_of_line.startswith(' '):
+                 cleaned_text = f"{name} whispers: {rest_of_line.lstrip()}"
+
+        # /me format: "* Nama_Karakter aksi" -> "* Nama Karakter aksi"
+        elif text.startswith('* ') and not text.startswith('** '):
             parts = text.split(' ', 2)
             if len(parts) >= 3:
                 name = parts[1].replace('_', ' ')
@@ -1023,10 +1131,22 @@ class SSRPChatlogCog(commands.Cog, name="SSRPChatlog"):
                  name = parts[1].replace('_', ' ')
                  cleaned_text = f"* {name}"
 
+        # /do format: "** Deskripsi (( Nama_Karakter ))" -> "** Deskripsi (( Nama Karakter ))"
+        elif text.startswith('** '):
+            # Cari dan replace underscore dalam (( Nama_Karakter ))
+            cleaned_text = re.sub(
+                r'\(\(\s*([A-Za-z0-9_]+(?:\s+[A-Za-z0-9_]+)*)\s*\)\)',
+                lambda m: f"(( {m.group(1).replace('_', ' ')} ))",
+                text
+            )
+
+        # Shadow dengan 8 arah untuk ketajaman maksimal
         for dx, dy in self.SHADOW_OFFSETS:
             draw.text((x + dx, y + dy), cleaned_text, font=font, fill=self.COLOR_SHADOW)
 
+        # Text utama dengan antialiasing
         draw.text(pos, cleaned_text, font=font, fill=text_color)
+
 
 # Setup function
 async def setup(bot):
