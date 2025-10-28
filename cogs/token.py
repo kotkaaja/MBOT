@@ -517,12 +517,15 @@ class TokenCog(commands.Cog, name="Token"):
     @app_commands.describe(alias="Alias sumber token (contoh: github, vip, premium)")
     @app_commands.check(is_admin_check_slash)
     async def open_claim_slash(self, interaction: discord.Interaction, alias: str):
+        # Defer respons untuk memberi waktu GitHub update
+        await interaction.response.defer(ephemeral=True)
+        
         alias_lower = alias.lower()
         if alias_lower not in self.TOKEN_SOURCES:
-            await interaction.response.send_message(f"❌ Alias `{alias}` tidak valid. Cek .env `TOKEN_SOURCES`.", ephemeral=True)
+            await interaction.followup.send(f"❌ Alias `{alias}` tidak valid. Cek .env `TOKEN_SOURCES`.", ephemeral=True)
             return
         if not self.CLAIM_CHANNEL_ID or not (claim_channel := self.bot.get_channel(self.CLAIM_CHANNEL_ID)):
-            await interaction.response.send_message(f"❌ `CLAIM_CHANNEL_ID` tidak valid atau channel tidak ditemukan.", ephemeral=True)
+            await interaction.followup.send(f"❌ `CLAIM_CHANNEL_ID` tidak valid atau channel tidak ditemukan.", ephemeral=True)
             return
 
         if self.bot.close_claim_message:
@@ -536,28 +539,48 @@ class TokenCog(commands.Cog, name="Token"):
         await self._persist_current_claim_state()
 
         embed = discord.Embed(title=f"📝 Sesi Klaim Dibuka: {alias.title()}", description=f"Sesi klaim untuk sumber `{alias.title()}` telah dibuka oleh {interaction.user.mention}.", color=discord.Color.green())
+        
+        # === [PERBAIKAN] Blok try...except yang lebih baik ===
         try:
-            # Jika bot baru saja direstart, open_claim_message mungkin None meskipun state terbuka
-            # Kita perlu mencari pesan lama atau mengirim yang baru
-            
             # Coba hapus view dari pesan lama jika ada (walaupun state sudah terbuka)
             if self.bot.open_claim_message:
                 try: await self.bot.open_claim_message.edit(view=None)
-                except discord.HTTPException: pass
+                except discord.HTTPException: pass # Abaikan jika pesan sudah hilang
 
+            # Coba kirim panel baru
             self.bot.open_claim_message = await claim_channel.send(embed=embed, view=ClaimPanelView(self.bot))
-            await interaction.response.send_message(f"✅ Panel klaim untuk `{alias.title()}` dikirim ke {claim_channel.mention}.", ephemeral=True)
+            
+            # Jika berhasil kirim panel, kirim konfirmasi
+            await interaction.followup.send(f"✅ Panel klaim untuk `{alias.title()}` dikirim ke {claim_channel.mention}.", ephemeral=True)
+
         except discord.Forbidden:
-             await interaction.response.send_message(f"❌ Bot tidak punya izin mengirim pesan/view di {claim_channel.mention}.", ephemeral=True)
+             err_msg = f"❌ Bot tidak punya izin mengirim pesan/view di {claim_channel.mention}."
+             await interaction.followup.send(err_msg, ephemeral=True)
+        
+        except discord.HTTPException as e:
+            # === [PERBAIKAN] Tangkap error 429 / 1015 ===
+            logger.error(f"Error HTTP saat mengirim panel klaim: {e}")
+            err_msg_429 = (
+                f"⚠️ **Sesi Klaim DIBUKA, tapi Gagal Mengirim Panel.**\n"
+                f"Bot sedang di-rate limit oleh Discord (Error 1015 / 429).\n"
+                f"Status di GitHub: **TERBUKA** untuk `{alias.title()}`.\n"
+                f"Panel tidak akan muncul, tapi pengguna *bisa* klaim jika panel lama masih ada."
+            )
+            await interaction.followup.send(err_msg_429, ephemeral=True)
+            
         except Exception as e:
-             logger.error(f"Error saat mengirim panel klaim: {e}")
-             await interaction.response.send_message(f"❌ Terjadi error saat mengirim panel: {e}", ephemeral=True)
+             logger.error(f"Error tidak dikenal saat mengirim panel klaim: {e}")
+             err_msg_unknown = f"❌ Terjadi error tidak dikenal saat mengirim panel: {e}"
+             await interaction.followup.send(err_msg_unknown, ephemeral=True)
 
     @app_commands.command(name="close_claim", description="[ADMIN] Menutup sesi klaim dan mengirim notifikasi")
     @app_commands.check(is_admin_check_slash)
     async def close_claim_slash(self, interaction: discord.Interaction):
+        # Defer respons untuk memberi waktu GitHub update
+        await interaction.response.defer(ephemeral=True)
+
         if not self.bot.current_claim_source_alias:
-            await interaction.response.send_message("ℹ️ Tidak ada sesi klaim yang sedang aktif.", ephemeral=True)
+            await interaction.followup.send("ℹ️ Tidak ada sesi klaim yang sedang aktif.", ephemeral=True)
             return
             
         if self.bot.open_claim_message:
@@ -576,14 +599,25 @@ class TokenCog(commands.Cog, name="Token"):
         # === [BARU] Panggil helper untuk persist state (None) ===
         await self._persist_current_claim_state()
         
+        # === [PERBAIKAN] Blok try...except untuk pesan penutupan ===
+        pesan_error_rate_limit = ""
         if self.CLAIM_CHANNEL_ID and (claim_channel := self.bot.get_channel(self.CLAIM_CHANNEL_ID)):
             try:
                 embed_closed = discord.Embed(title="🔴 Sesi Klaim Ditutup", description=f"Admin ({interaction.user.mention}) telah menutup sesi klaim untuk `{closed_alias.title()}`.", color=discord.Color.red())
                 self.bot.close_claim_message = await claim_channel.send(embed=embed_closed)
             except discord.Forbidden:
                  logger.warning(f"Gagal mengirim pesan notifikasi penutupan ke channel {self.CLAIM_CHANNEL_ID}.")
+            except discord.HTTPException as e:
+                 # Tangkap error 429 / 1015
+                 logger.error(f"Error HTTP saat mengirim pesan penutupan: {e}")
+                 pesan_error_rate_limit = "\n(Notifikasi di channel gagal terkirim karena bot di-rate limit)."
         
-        await interaction.response.send_message(f"🔴 Sesi klaim untuk `{closed_alias.title()}` telah ditutup.", ephemeral=True)
+        # Kirim konfirmasi ke admin
+        resp_msg = (
+            f"🔴 Sesi klaim untuk `{closed_alias.title()}` telah ditutup.\n"
+            f"(Status di GitHub: **TERTUTUP**).{pesan_error_rate_limit}"
+        )
+        await interaction.followup.send(resp_msg, ephemeral=True)
 
     @app_commands.command(name="cleanup_expired", description="[ADMIN] Hapus semua token kedaluwarsa SEKARANG (tanpa menunggu 1 jam)")
     @app_commands.check(is_admin_check_slash)
