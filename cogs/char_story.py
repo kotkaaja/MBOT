@@ -21,7 +21,7 @@ SERVER_CONFIG = {
     "ssrp": {
         "name": "SSRP",
         "rules": """- Cerita harus memiliki minimal 4 paragraf dan 3 kalimat di setiap paragraf.
-- Gunakan 5 spasi di awal setiap paragraf.
+- Gunakan 5 spasi di awal setiap paragraf Di paragraft pertama juga wajib.
 - Tulis tanggal lahir dalam format 'DD Bulan YYYY'.
 - Gunakan huruf kapital hanya pada nama orang, nama tempat, dan awal kalimat.
 - Gunakan Bahasa Indonesia yang baku dan sesuai KBBI.
@@ -40,8 +40,8 @@ STORY :
     "virtual_rp": {
         "name": "Virtual RP",
         "rules": """- Cerita harus memiliki minimal 250 suku kata.
-- Umur karakter minimal 17 tahun.
 - Beri jarak antar paragraf.
+- Gunakan 5 spasi di awal setiap paragraf Di paragraft pertama juga wajib.
 - Cerita minimal 4 paragraf, dan 1 paragraf minimal 4 baris.
 - Gunakan Bahasa Indonesia yang baku dan sesuai KBBI.
 - Perhatikan penggunaan huruf kapital dan tanda baca (beri spasi setelah titik/koma).
@@ -64,7 +64,8 @@ STORY :
         "name": "AARP",
         "rules": """- Gunakan Bahasa Indonesia yang baku.
 - Jangan gunakan garis bawah (_) pada nama karakter dalam cerita. Contoh salah: Muriel_Bagge, contoh benar: Muriel Bagge.
-- Cerita minimal 1 paragraf atau lebih, singkat dan jelas.""",
+- Cerita minimal 1 paragraf atau lebih, singkat dan jelas.
+- Beri jarak antar paragraf.""",
         "format": """**__[Format Character Story]__**
 - Nama [ IC ] : {nama_char}
 - JENIS KELAMIN : {jenis_kelamin}
@@ -90,9 +91,113 @@ Story :
 * Latar Belakang Cerita:
 
 {story}"""
-    }
-}
+    },
+    "tenrp": {
+        "name": "TEN ROLEPLAY",
+        "rules": """- CS di larang menggabungkan unsur OOC kedalam IC. Semua full dengan IC dari awal Charakter kalian masuk ke dalam kota.
+- Ketika pembuatan di perhatikan tanda (,) (.) Dan berparagraf.
+- Sertakan nama orang tua ayah dan ibu
+- Cs menggunakan bahasa Indonesia baku.
+- Character story minimal 4 paragraf.
+- Dalam penulisan tempat tanggal lahir dilarang menggunakan spasi , / atau - (Contoh benar: Los Santos , 03 Juni 2004)
+- Mudah dipahami dan dimengerti
+- Nama lengkap tulis kembali dalam cerita gausah lagi pakai tanda ( _ ) 
+- Tulis kembali tanggal, bulan, tahun dan umur dalam cerita
+- Setiap pergantian paragraf baru harus enter / melangkah
+- Membuat paragraf agar terlihat rapih dan kelihatan paragraf nya jangan lupa pakai spasi . Jangan  rata kek jalan aspal
+- Menggunakan format yang telah disediakan
+- Setiap akhir paragraf dikasi tanda titik
+- Perhatikan penggunaan huruf setelah tanda koma dan titik dengan benar 
+- Yang huruf awalan memakai huruf kapital setelah tanda koma hanya boleh nama "Contoh :  Max Escobar""",
+       "format": """**FORMAT CHARACTER STORY TEN ROLEPLAY**
+* Nama Character: {nama_char}
+* Usia Character: (Isi Manual)
+* Tempat Tanggal Lahir: ( Isi Manual Sesuai CS)
+* STORY CHARACTER : 
 
+{story}"""
+    },
+    "cprp": {
+        "name": "CPRP",
+        "rules": """1. Sesuaikan antara umur dan tanggal lahir karakter yang anda buat di In Game (/stats) dengan umur dan tanggal lahir didalam ceritanya. Batas minimal umur dalam pembuatan CS dari 17 Tahun.
+2. Perhatikan penulisan huruf besar/kapital dan huruf kecil dalam pembuatan Story yang kalian buat, contohnya di awal paragraf/kalimat. Huruf besar/kapital juga bisa digunakan saat penulisan contoh :
+a.Nama orang = Grace Jhonatan 
+b. Nama negara = Amerika Serikat atau negara Amerika Serikat 
+c. Nama kota = Kota Los Santos
+d. Nama hari = Senin
+e. Nama bulan = November
+f. Nama profesi = seorang Mekanik 
+g. Hubungan kekerabatan = Ayah, Ibu, Kakak, Adik. Namun, apabila terdapat tambahan imbuhan (nya) pada hubungan kekerabatan, tidak perlu ditulis menggunakan huruf kapital seperti ayahnya, ibunya, kakaknya, adiknya
+3. Perhatikan penulisan tanda baca pada saat pembuatan Story seperti tanda (,) dan (.). Seperti diakhir setiap kalimat harus ada tanda titik (.) Contohnya: " Worick adalah seorang anak dari keluarga yang kaya, ayahnya merupakan saudagar terkenal di Kota Los Santos."
+4. Penulisan tanggal lahir tidak boleh menggunakan symbol ( / ) dan ( - ). Contohnya 17 Februari 1998 
+5. Character story wajib memiliki 4 paragraf (minimal) dan minimal 4 baris setiap paragraf, setiap akhir paragraf beri tanda ( .) 
+6. Penulisan Nama Karakter dalam Story harus sesuai didalam cerita, tidak usah menggunakan tanda ( _ ). Contohnya: Grace Jhonatan atau Worick Arcangelo.
+7. Batas minimal level dalam pembuatan CS level 8 keatas
+8. Dilarang keras melakukan plagiarisme
+9. Setiap awal paragraf beri 3 spasi di paragraft pertama wajib jug""",
+        "format": """**__FORMAT CHARACTER STORY CPRP__**
+
+**Nama [IC]** : {nama_char}
+**Umur [IC]** : (Isi manual, min 17)
+**Tanggal lahir [IC sesuai Id card]** : {tanggal_lahir}
+**Ss stats & Id card [Wajib]** : (Lampirkan manual)
+**Ss Tab Level in Game [Wajib]**: (Lampirkan manual, min Lvl 8)
+**Story** : 
+
+{story}
+
+**Tag** : <@&1212085960418791464>"""
+    },
+    # --- PENAMBAHAN RELATIVE RP DIMULAI DARI SINI ---
+    "relativerp": {
+        "name": "Relative RP",
+        "rules": """- Pembuatan character story tidak dibatasi level, kalian bisa membuat cs walaupun masih level 1.
+- Untuk umur character diwajibkan minimal 17 tahun ke atas.
+- Pemberian jarak antar paragraf satu dengan yang lainnya.
+- Pemberian 5x spasi ke samping di awal kalimat saat memulai paragraf.
+- Character story minimal 4 paragraf, dan 1 paragrafnya minimal 4 baris.
+- Penggunaan titik dan koma yang tepat.
+- Alur cerita harus sesuai / tidak boleh ngawur.
+- Menggunakan bahasa Indonesia yang baku atau sesuai dengan KBBI.
+- Penggunaan huruf kapital harus diperhatikan seperti nama orang, nama daerah, dan lain-lain.
+- Perhatikan penggunaan tanda baca, setelah penggunaan koma dan titik diharuskan memeberikan 1 jarak / spasi.
+- Dilarang menyalin story milik orang lain.
+- Perhatikan penulisan nama, pada character story penulisan nama tidak perlu menggunakan garis bawah (_).
+- Perhatian penulisan tanggal lahir, penulisan tanggal lahir yang tepat yaitu '27 November 2001'.
+- Nama charactermu harus sesuai dengan roleplay name dan tidak mengandung dual culture.""",
+        "format": """FORMAT CHARACTER STORY
+
+Nama Character : {nama_char}
+Usia Character     : (Isi manual, sesuai cs di atas)
+Asal Character     : {kota_asal}
+Gender                   : {jenis_kelamin}
+
+Story Character :
+
+{story}"""
+    },
+    "jgrp": {
+        "name": "JGRP",
+        "rules": """- Pastikan character kamu sudah minimal berlevel 3.
+- Menggunakan formulir untuk character story.
+- Menggunakan font yang mudah dibaca (Arial, Calibri, atau Tahoma),Font size: 14, dan jangan diberikan atribut berlebihan (Bold, Italic, atau Underline)
+- Tidak boleh ada plagiarisme (silahkan cari di internet untuk plagiarism checker, contoh: http://smallseotools.com/plagiarism-checker/ )
+- Ejaan, tanda baca, dan grammar harus sesuai dengan standard bahasa yang dipilih (Bahasa Indonesia atau English).
+- Gunakan 5 spasi di awal setiap paragraf Di paragraft pertama juga wajib.
+- Character story minimal harus memiliki 300 kata yang dipecah menjadi minimal 3 paragraph.""",
+        "format": """**__FORMAT SEMENTARA REQUEST CS | JGRP__**
+- Nama karakter : {nama_char}
+- Level karakter : {level}
+- Jenis kelamin karakter : {jenis_kelamin}
+- Tempat, tanggal lahir karakter : {kota_asal}, {tanggal_lahir}
+- Screenshot /stats : (Lampirkan manual)
+- NOTE : INI FORMAT SEMENTARA SILAHKAN COPY STORYNYA DAN ISI ULANG DI FORUM JGRP
+STORY :
+
+{story}"""
+    }
+    # --- AKHIR PENAMBAHAN ---
+}
 
 # ============================
 # UI COMPONENTS (MODAL & VIEWS)
@@ -256,11 +361,16 @@ class ServerSelectionView(ui.View):
 
     @ui.select(
         placeholder="Pilih server tujuan...",
-        options=[
-            discord.SelectOption(label="SSRP", value="ssrp", description="Buat CS untuk server SSRP."),
+       options=[
+            discord.SelectOption(label="SSRP", value="ssrp", description="Buat CS untuk server State Side RP."),
             discord.SelectOption(label="Virtual RP", value="virtual_rp", description="Buat CS untuk server Virtual RP."),
-            discord.SelectOption(label="AARP", value="aarp", description="Buat CS untuk server AARP."),
-            discord.SelectOption(label="GCRP", value="gcrp", description="Buat CS untuk server GCRP."),
+            discord.SelectOption(label="AARP", value="aarp", description="Buat CS untuk server Air Asia RP."),
+            discord.SelectOption(label="GCRP", value="gcrp", description="Buat CS untuk server Grand Country RP."),
+            discord.SelectOption(label="TEN ROLEPLAY", value="tenrp", description="Buat CS untuk server 10RP."),
+            discord.SelectOption(label="CPRP", value="cprp", description="Buat CS untuk server Cyristal Pride RP."),
+            discord.SelectOption(label="Relative RP", value="relativerp", description="Buat CS untuk server Relative RP."),
+            discord.SelectOption(label="JGRP", value="jgrp", description="Buat CS untuk server JGRP."),
+            # --- AKHIR PENAMBAHAN ---,
         ],
         custom_id="server_select"
     )
