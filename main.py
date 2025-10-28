@@ -95,6 +95,8 @@ class Config:
         
         # --- PATH FILE DI REPOSITORY GITHUB ---
         self.CLAIMS_FILE_PATH = 'claims.json'
+        # === [BARU] Path untuk menyimpan status sesi klaim ===
+        self.TOKEN_STATE_FILE_PATH = 'token_state.json'
 
         # --- KONFIGURASI ROLE (TETAP) ---
         # Digunakan oleh cogs/token.py
@@ -239,7 +241,74 @@ async def main():
                     )
             logger.info("Health check claims.json selesai, siap digunakan.")
 
-        # 3. Sinkronisasi Slash Commands
+        # === [BARU] 3. Cek kesehatan token_state.json ===
+        async with bot.github_lock:
+            logger.info("Mengecek status token_state.json di GitHub...")
+            state_content, state_sha = get_github_file(
+                bot.config.PRIMARY_REPO,
+                bot.config.TOKEN_STATE_FILE_PATH,
+                bot.config.GITHUB_TOKEN
+            )
+
+            # Tentukan default alias
+            default_alias = "bassic" # Sesuai permintaan user
+            if default_alias not in bot.config.TOKEN_SOURCES:
+                # Fallback jika 'bassic' tidak ada di env var TOKEN_SOURCES
+                default_alias = next(iter(bot.config.TOKEN_SOURCES.keys()), None)
+                if default_alias:
+                    logger.warning(f"'bassic' tidak ditemukan di TOKEN_SOURCES, menggunakan fallback alias: {default_alias}")
+                else:
+                    logger.error("FATAL: Tidak ada TOKEN_SOURCES yang dikonfigurasi. Klaim tidak akan berfungsi.")
+                    default_alias = None # Bot akan mulai dalam keadaan tertutup
+
+            if state_content is None:
+                logger.warning(f"token_state.json tidak ditemukan, membuat file baru dengan default alias: {default_alias}")
+                default_state_data = {"current_claim_alias": default_alias}
+                update_github_file(
+                    bot.config.PRIMARY_REPO,
+                    bot.config.TOKEN_STATE_FILE_PATH,
+                    json.dumps(default_state_data, indent=4),
+                    None,
+                    "Bot: Initialize token_state.json",
+                    bot.config.GITHUB_TOKEN
+                )
+                bot.current_claim_source_alias = default_alias
+            else:
+                try:
+                    if not state_content.strip(): raise json.JSONDecodeError("File is empty", state_content, 0)
+                    state_data = json.loads(state_content)
+                    bot.current_claim_source_alias = state_data.get("current_claim_alias")
+                    
+                    # Jika file ada tapi aliasnya tidak valid (mungkin dihapus dari env var), reset ke default
+                    if bot.current_claim_source_alias and bot.current_claim_source_alias not in bot.config.TOKEN_SOURCES:
+                         logger.warning(f"Alias '{bot.current_claim_source_alias}' di token_state.json tidak valid lagi. Mereset ke default ({default_alias}).")
+                         bot.current_claim_source_alias = default_alias
+                         # Tulis ulang file dengan default yang valid
+                         default_state_data = {"current_claim_alias": default_alias}
+                         update_github_file(
+                            bot.config.PRIMARY_REPO,
+                            bot.config.TOKEN_STATE_FILE_PATH,
+                            json.dumps(default_state_data, indent=4),
+                            state_sha,
+                            "Bot: Reset token_state.json (alias tidak valid)",
+                            bot.config.GITHUB_TOKEN
+                         )
+                except json.JSONDecodeError:
+                    logger.error(f"token_state.json rusak, menginisialisasi ulang file dengan default ({default_alias})...")
+                    default_state_data = {"current_claim_alias": default_alias}
+                    update_github_file(
+                        bot.config.PRIMARY_REPO,
+                        bot.config.TOKEN_STATE_FILE_PATH,
+                        json.dumps(default_state_data, indent=4),
+                        state_sha,
+                        "Bot: Re-initialize corrupted token_state.json",
+                        bot.config.GITHUB_TOKEN
+                    )
+                    bot.current_claim_source_alias = default_alias
+
+            logger.info(f"Health check token_state.json selesai. Status klaim saat ini: {bot.current_claim_source_alias}")
+        
+        # 4. Sinkronisasi Slash Commands (sebelumnya nomor 3)
         try:
             synced = await bot.tree.sync()
             logger.info(f"Berhasil sinkronisasi {len(synced)} slash command(s).")
