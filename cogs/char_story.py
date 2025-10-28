@@ -195,6 +195,32 @@ Story Character :
 STORY :
 
 {story}"""
+    },
+    "fmrp": {
+        "name": "FMRP",
+        "rules": """[•] Diawal story wajib memiliki tanggal lahir karakter anda.
+[•] Menggunakan Bahasa Indonesia/Inggris yang baik dan benar sesuai dengan kaidah kepenulisan.
+[•] Menggunakan sudut pandang pihak ketiga, namun tidak boleh memakai kata "ia" dan "dia". Wajib menggunakan nama karakter.
+[•] Menggunakan tanda baca yang tepat serta menggunakan kalimat yang dapat dimengerti.
+[•] Menggunakan penulisan huruf kapital yang benar.
+[•] Character Story minimal memiliki 4 paragraf dan masing-masing memiliki 4 kalimat.
+[•] Minimal mempunyai 230-300 kata
+[•] Beri satu baris kosong untuk memisahkan paragraf satu dengan lainnya.
+[•] Tidak memasukkan dialog dalam cerita karakter.
+[•] Penulisan Nama di dalam cerita tidak boleh menggunakan tanda (_), agar terlihat rapih.
+[•] Akhiri setiap paragraf dengan tanda baca (.), Karna banyaknya baris per paragraf dihitung dari kalimat yang diakhiri tanda baca (.).
+[•] Alur cerita tidak boleh terlalu cepat, ceritakan karakter kalian dari kecil hingga menjadi seperti sekarang.""",
+        # Menggunakan format yang sama dengan JGRP sesuai permintaan
+        "format": """**__FORMAT SEMENTARA REQUEST CS | FMRP__**
+- Nama karakter : {nama_char}
+- Level karakter : {level}
+- Jenis kelamin karakter : {jenis_kelamin}
+- Tempat, tanggal lahir karakter : {kota_asal}, {tanggal_lahir}
+- Screenshot /stats : (Lampirkan manual)
+- NOTE : INI FORMAT SEMENTARA SILAHKAN COPY STORYNYA DAN ISI ULANG DI DISCORD FMRP
+STORY :
+
+{story}"""
     }
     # --- AKHIR PENAMBAHAN ---
 }
@@ -370,6 +396,7 @@ class ServerSelectionView(ui.View):
             discord.SelectOption(label="CPRP", value="cprp", description="Buat CS untuk server Cyristal Pride RP."),
             discord.SelectOption(label="Relative RP", value="relativerp", description="Buat CS untuk server Relative RP."),
             discord.SelectOption(label="JGRP", value="jgrp", description="Buat CS untuk server JGRP."),
+            discord.SelectOption(label="FMRP", value="fmrp", description="Buat CS untuk server FAMERLONE RP.")
             # --- AKHIR PENAMBAHAN ---,
         ],
         custom_id="server_select"
