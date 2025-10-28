@@ -9,7 +9,8 @@ from dotenv import load_dotenv
 import json
 import requests
 import base64
-from datetime import timezone
+from datetime import timezone, datetime # Tambahkan datetime
+from typing import Dict # Import Dict jika belum ada
 
 from utils.database import init_database
 # Impor fungsi helper HANYA untuk Config class, cog akan mengimpornya sendiri
@@ -47,6 +48,14 @@ class Config:
         self.OPENAI_API_KEYS = [k.strip() for k in os.getenv("OPENAI_API_KEYS", "").split(',') if k.strip()]
         self.GEMINI_API_KEYS = [k.strip() for k in os.getenv("GEMINI_API_KEYS", "").split(',') if k.strip()]
         self.DEEPSEEK_API_KEYS = [k.strip() for k in os.getenv("DEEPSEEK_API_KEYS", "").split(',') if k.strip()]
+        
+        # --- [BARU] Tambahkan API Key untuk OpenRouter & AgentRouter ---
+        self.OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
+        self.AGENTROUTER_API_KEY = os.getenv("AGENTROUTER_API_KEY") # <-- BARIS INI DITAMBAHKAN
+        
+        # Header Opsional untuk OpenRouter
+        self.OPENROUTER_SITE_URL = os.getenv("OPENROUTER_SITE_URL", "http://localhost") 
+        self.OPENROUTER_SITE_NAME = os.getenv("OPENROUTER_SITE_NAME", "MBOT")
         
         # Variabel untuk Fitur Scanner
         self.ALERT_CHANNEL_ID = int(os.getenv("ALERT_CHANNEL_ID")) if os.getenv("ALERT_CHANNEL_ID") else None
@@ -95,14 +104,11 @@ class Config:
         
         # --- PATH FILE DI REPOSITORY GITHUB ---
         self.CLAIMS_FILE_PATH = 'claims.json'
-        # === [BARU] Path untuk menyimpan status sesi klaim ===
         self.TOKEN_STATE_FILE_PATH = 'token_state.json'
 
         # --- KONFIGURASI ROLE (TETAP) ---
-        # Digunakan oleh cogs/token.py
         self.ROLE_DURATIONS = {"vip": "30d", "supporter": "10d", "inner circle": "7d", "subscriber": "5d", "followers": "5d", "beginner": "3d"}
         self.ROLE_PRIORITY = ["vip", "supporter", "inner circle", "subscriber", "followers", "beginner"]
-        # Digunakan oleh cogs/role_assigner.py
         self.SUBSCRIBER_ROLE_NAME = "Subscriber"
         self.FOLLOWER_ROLE_NAME = "Followers"
         self.FORGE_VERIFIED_ROLE_NAME = "Inner Circle"
@@ -183,8 +189,7 @@ async def on_guild_join(guild):
 # ============================
 async def load_cogs():
     """Memuat semua fitur (Cogs) dari direktori cogs."""
-    # Tambahkan 'token' dan 'role_assigner' ke daftar cog
-    cogs_to_load = ['scanner', 'char_story', 'general', 'server_creator', 'converter', 'token', 'role_assigner', 'help_token', 'template_creator', 'ssrp_chatlog']
+    cogs_to_load = ['scanner', 'char_story', 'general', 'server_creator', 'converter', 'token', 'role_assigner', 'template_creator', 'ssrp_chatlog']
     for cog_name in cogs_to_load:
         try:
             await bot.load_extension(f'cogs.{cog_name}')
@@ -241,7 +246,7 @@ async def main():
                     )
             logger.info("Health check claims.json selesai, siap digunakan.")
 
-        # === [BARU] 3. Cek kesehatan token_state.json ===
+        # 3. Cek kesehatan token_state.json
         async with bot.github_lock:
             logger.info("Mengecek status token_state.json di GitHub...")
             state_content, state_sha = get_github_file(
@@ -251,15 +256,14 @@ async def main():
             )
 
             # Tentukan default alias
-            default_alias = "bassic" # Sesuai permintaan user
+            default_alias = "bassic" 
             if default_alias not in bot.config.TOKEN_SOURCES:
-                # Fallback jika 'bassic' tidak ada di env var TOKEN_SOURCES
                 default_alias = next(iter(bot.config.TOKEN_SOURCES.keys()), None)
                 if default_alias:
                     logger.warning(f"'bassic' tidak ditemukan di TOKEN_SOURCES, menggunakan fallback alias: {default_alias}")
                 else:
                     logger.error("FATAL: Tidak ada TOKEN_SOURCES yang dikonfigurasi. Klaim tidak akan berfungsi.")
-                    default_alias = None # Bot akan mulai dalam keadaan tertutup
+                    default_alias = None
 
             if state_content is None:
                 logger.warning(f"token_state.json tidak ditemukan, membuat file baru dengan default alias: {default_alias}")
@@ -279,11 +283,9 @@ async def main():
                     state_data = json.loads(state_content)
                     bot.current_claim_source_alias = state_data.get("current_claim_alias")
                     
-                    # Jika file ada tapi aliasnya tidak valid (mungkin dihapus dari env var), reset ke default
                     if bot.current_claim_source_alias and bot.current_claim_source_alias not in bot.config.TOKEN_SOURCES:
                          logger.warning(f"Alias '{bot.current_claim_source_alias}' di token_state.json tidak valid lagi. Mereset ke default ({default_alias}).")
                          bot.current_claim_source_alias = default_alias
-                         # Tulis ulang file dengan default yang valid
                          default_state_data = {"current_claim_alias": default_alias}
                          update_github_file(
                             bot.config.PRIMARY_REPO,
@@ -308,7 +310,7 @@ async def main():
 
             logger.info(f"Health check token_state.json selesai. Status klaim saat ini: {bot.current_claim_source_alias}")
         
-        # 4. Sinkronisasi Slash Commands (sebelumnya nomor 3)
+        # 4. Sinkronisasi Slash Commands
         try:
             synced = await bot.tree.sync()
             logger.info(f"Berhasil sinkronisasi {len(synced)} slash command(s).")
