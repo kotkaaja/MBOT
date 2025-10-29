@@ -13,18 +13,15 @@ import google.generativeai as genai
 import io # Import io untuk file buffer
 import itertools # Import itertools untuk key cycling
 
-# --- [BARU REQ #3] Import database untuk limit AI ---
+# Import database untuk limit AI
 from utils.database import check_ai_limit, increment_ai_usage, get_user_rank
-# --- [AKHIR PERBAIKAN] ---
-
 
 logger = logging.getLogger(__name__)
 
 # ============================
-# KONSTANTA & PROMPT AI (DIPERBARUI DENGAN BAHASA)
+# KONSTANTA & PROMPT AI (Tetap sama)
 # ============================
 
-# --- [PROMPT LAMA DIHAPUS DAN DIGANTI DENGAN YANG BARU INI] ---
 AI_TEMPLATE_PROMPT = """
 PERAN: Anda adalah penulis skrip Roleplay (RP) ahli untuk server GTA SAMP (San Andreas Multiplayer).
 
@@ -75,8 +72,6 @@ Output HARUS HANYA JSON (WAJIB format ini, tanpa teks lain di luar JSON):
   ]
 }}
 """
-# --- [AKHIR DARI PROMPT BARU] ---
-
 
 # Mapping ID senjata untuk Gun RP
 WEAPON_LIST = {
@@ -87,7 +82,7 @@ WEAPON_LIST = {
 }
 
 # ============================
-# UI COMPONENTS
+# UI COMPONENTS (Tetap sama)
 # ============================
 class MacroTypeSelectView(discord.ui.View):
     """View untuk memilih tipe macro"""
@@ -180,7 +175,7 @@ class WeaponSelectView(discord.ui.View):
 
 
 # ============================
-# MODAL KONFIGURASI
+# MODAL KONFIGURASI (Tetap sama)
 # ============================
 
 class ConfigInputModal(discord.ui.Modal):
@@ -348,73 +343,82 @@ class TemplateCreatorCog(commands.Cog, name="TemplateCreator"):
         self.bot = bot
         self.config = bot.config
         self.active_sessions = {}
-        # Tambahkan key cyclers
+        # Tambahkan key cyclers untuk SEMUA provider
         self.gemini_key_cycler = itertools.cycle(self.config.GEMINI_API_KEYS) if self.config.GEMINI_API_KEYS else None
         self.deepseek_key_cycler = itertools.cycle(self.config.DEEPSEEK_API_KEYS) if self.config.DEEPSEEK_API_KEYS else None
         self.openai_key_cycler = itertools.cycle(self.config.OPENAI_API_KEYS) if self.config.OPENAI_API_KEYS else None
+        self.openrouter_key_cycler = itertools.cycle(self.config.OPENROUTER_API_KEYS) if self.config.OPENROUTER_API_KEYS else None
+        self.agentrouter_key_cycler = itertools.cycle(self.config.AGENTROUTER_API_KEYS) if self.config.AGENTROUTER_API_KEYS else None
 
+        # Siapkan header OpenRouter jika ada key
+        if self.openrouter_key_cycler:
+            self.openrouter_headers = {
+                "HTTP-Referer": getattr(self.config, 'OPENROUTER_SITE_URL', 'http://localhost'),
+                "X-Title": getattr(self.config, 'OPENROUTER_SITE_NAME', 'MBOT'),
+            }
 
-    async def _get_ai_analysis(self, theme: str, details: str, language: str) -> Optional[List[Dict]]:
-        """Menggunakan AI untuk generate langkah-langkah RP dalam bahasa yang diminta."""
-        prompt = AI_TEMPLATE_PROMPT.format(theme=theme, details=details, language=language)
-        logger.info(f"Mengirim prompt ke AI (Bahasa: {language})")
+    # --- [BARU] Fungsi AI Helper Terpisah ---
+    async def _try_gemini(self, prompt: str) -> Optional[List[Dict]]:
+        if not self.gemini_key_cycler: return None
+        try:
+            key = next(self.gemini_key_cycler)
+            genai.configure(api_key=key)
+            model = genai.GenerativeModel('gemini-1.5-flash')
+            logger.info(f"Template Creator: Mencoba Gemini...")
+            response = await model.generate_content_async(
+                prompt,
+                generation_config=genai.types.GenerationConfig(
+                    response_mime_type="application/json", temperature=0.7
+                ),
+                request_options={"timeout": 60}
+            )
+            if response.prompt_feedback.block_reason: raise Exception(f"Diblokir: {response.prompt_feedback.block_reason.name}")
+            if response.candidates and response.candidates[0].finish_reason.name != "STOP": raise Exception(f"Finish reason: {response.candidates[0].finish_reason.name}")
+            cleaned = re.sub(r'```json\s*|\s*```', '', response.text.strip(), flags=re.DOTALL)
+            if not cleaned: raise ValueError("Respons JSON kosong.")
+            data = json.loads(cleaned)
+            logger.info("AI (Gemini) berhasil generate.")
+            return data.get("steps")
+        except Exception as e:
+            logger.warning(f"Template Creator: Gemini gagal: {e}")
+            await asyncio.sleep(1)
+            return None
 
-        # Fallback Logic
-        if self.gemini_key_cycler:
-            try:
-                key = next(self.gemini_key_cycler)
-                genai.configure(api_key=key)
-                model = genai.GenerativeModel('gemini-1.5-flash')
-                response = await model.generate_content_async(
-                    prompt,
-                    generation_config=genai.types.GenerationConfig(
-                        response_mime_type="application/json", temperature=0.7 # Tambah temperature
-                    ),
-                    request_options={"timeout": 60} # Tambah timeout
+    async def _try_deepseek(self, prompt: str) -> Optional[List[Dict]]:
+        if not self.deepseek_key_cycler: return None
+        try:
+            key = next(self.deepseek_key_cycler)
+            async with httpx.AsyncClient(timeout=40.0) as client:
+                logger.info(f"Template Creator: Mencoba Deepseek...")
+                response = await client.post(
+                    "https://api.deepseek.com/chat/completions",
+                    json={
+                        "model": "deepseek-chat",
+                        "messages": [{"role": "user", "content": prompt}],
+                        "response_format": {"type": "json_object"},
+                        "temperature": 0.7
+                    },
+                    headers={"Authorization": f"Bearer {key}"}
                 )
-                if response.prompt_feedback.block_reason:
-                    raise Exception(f"Gemini diblokir: {response.prompt_feedback.block_reason.name}")
-                if response.candidates and response.candidates[0].finish_reason.name != "STOP":
-                     raise Exception(f"Gemini finish reason: {response.candidates[0].finish_reason.name}")
-
-                cleaned = re.sub(r'```json\s*|\s*```', '', response.text.strip(), flags=re.DOTALL)
-                if not cleaned: raise ValueError("Respons JSON dari Gemini kosong.")
-
+                response.raise_for_status()
+                cleaned = re.sub(r'```json\s*|\s*```', '', response.json()["choices"][0]["message"]["content"].strip(), flags=re.DOTALL)
+                if not cleaned: raise ValueError("Respons JSON kosong.")
                 data = json.loads(cleaned)
-                logger.info("AI (Gemini) berhasil generate.")
-                return data.get("steps", [])
-            except Exception as e:
-                logger.warning(f"Template Creator: Gemini gagal: {e}")
-                await asyncio.sleep(1)
+                logger.info("AI (DeepSeek) berhasil generate.")
+                return data.get("steps")
+        except Exception as e:
+            logger.warning(f"Template Creator: DeepSeek gagal: {e}")
+            await asyncio.sleep(1)
+            return None
 
-        if self.deepseek_key_cycler:
-            try:
-                key = next(self.deepseek_key_cycler)
-                async with httpx.AsyncClient(timeout=40.0) as client: # Tambah timeout
-                    response = await client.post(
-                        "https://api.deepseek.com/chat/completions",
-                        json={
-                            "model": "deepseek-chat",
-                            "messages": [{"role": "user", "content": prompt}],
-                            "response_format": {"type": "json_object"},
-                            "temperature": 0.7
-                        },
-                        headers={"Authorization": f"Bearer {key}"}
-                    )
-                    response.raise_for_status()
-                    cleaned = re.sub(r'```json\s*|\s*```', '', response.json()["choices"][0]["message"]["content"].strip(), flags=re.DOTALL)
-                    if not cleaned: raise ValueError("Respons JSON dari Deepseek kosong.")
-                    data = json.loads(cleaned)
-                    logger.info("AI (DeepSeek) berhasil generate.")
-                    return data.get("steps", [])
-            except Exception as e:
-                logger.warning(f"Template Creator: DeepSeek gagal: {e}")
-                await asyncio.sleep(1)
-
-        if self.openai_key_cycler:
+    async def _try_openai(self, prompt: str) -> Optional[List[Dict]]:
+        if not self.openai_key_cycler: return None
+        max_retries = len(self.bot.config.OPENAI_API_KEYS)
+        for attempt in range(max_retries):
             try:
                 key = next(self.openai_key_cycler)
-                client = AsyncOpenAI(api_key=key, timeout=30.0) # Tambah timeout
+                client = AsyncOpenAI(api_key=key, timeout=30.0)
+                logger.info(f"Template Creator: Mencoba OpenAI Key #{attempt+1}...")
                 response = await client.chat.completions.create(
                     model="gpt-4o-mini",
                     messages=[{"role": "user", "content": prompt}],
@@ -422,15 +426,88 @@ class TemplateCreatorCog(commands.Cog, name="TemplateCreator"):
                     temperature=0.7
                 )
                 cleaned = re.sub(r'```json\s*|\s*```', '', response.choices[0].message.content.strip(), flags=re.DOTALL)
-                if not cleaned: raise ValueError("Respons JSON dari OpenAI kosong.")
+                if not cleaned: raise ValueError("Respons JSON kosong.")
                 data = json.loads(cleaned)
                 logger.info("AI (OpenAI) berhasil generate.")
-                return data.get("steps", [])
+                return data.get("steps")
             except Exception as e:
-                logger.error(f"Template Creator: OpenAI GAGAL (fallback terakhir): {e}")
+                logger.warning(f"Template Creator: OpenAI Key #{attempt+1} gagal: {e}")
+                if "rate_limit_exceeded" in str(e).lower() or "429" in str(e):
+                    if attempt < max_retries - 1:
+                        await asyncio.sleep(1)
+                        continue
+                    else:
+                        logger.error("Semua OpenAI keys rate limited.")
+                        return None # Gagal setelah semua key dicoba
+                else:
+                     return None # Error lain, hentikan percobaan OpenAI
+        return None # Gagal setelah loop
 
-        logger.error("Semua AI gagal untuk Template Creator.")
-        return None # Return None jika semua gagal
+    async def _try_openrouter(self, prompt: str) -> Optional[List[Dict]]:
+        if not self.openrouter_key_cycler: return None
+        try:
+            key = next(self.openrouter_key_cycler)
+            async with httpx.AsyncClient(timeout=60.0) as client:
+                logger.info(f"Template Creator: Mencoba OpenRouter...")
+                payload = {
+                    "model": "mistralai/mistral-7b-instruct:free",
+                    "messages": [{"role": "user", "content": prompt}],
+                    "response_format": {"type": "json_object"},
+                    "temperature": 0.7, "max_tokens": 2048
+                }
+                headers = {"Authorization": f"Bearer {key}"}
+                if hasattr(self, 'openrouter_headers'): headers.update(self.openrouter_headers)
+
+                response = await client.post("https://openrouter.ai/api/v1/chat/completions", json=payload, headers=headers)
+                response.raise_for_status()
+                cleaned = re.sub(r'```json\s*|\s*```', '', response.json()["choices"][0]["message"]["content"].strip(), flags=re.DOTALL)
+                if not cleaned: raise ValueError("Respons JSON kosong.")
+                data = json.loads(cleaned)
+                logger.info("AI (OpenRouter) berhasil generate.")
+                return data.get("steps")
+        except Exception as e:
+            logger.warning(f"Template Creator: OpenRouter gagal: {e}")
+            await asyncio.sleep(1)
+            return None
+
+    async def _try_agentrouter(self, prompt: str) -> Optional[List[Dict]]:
+        if not self.agentrouter_key_cycler: return None
+        try:
+            key = next(self.agentrouter_key_cycler)
+            logger.info(f"Template Creator: Mencoba AgentRouter...")
+            client = AsyncOpenAI(api_key=key, base_url="https://agentrouter.org/v1", timeout=45.0)
+            response = await client.chat.completions.create(
+                model="gpt-4o-mini", # Ganti model jika perlu
+                messages=[{"role": "user", "content": prompt}],
+                response_format={"type": "json_object"},
+                temperature=0.7
+            )
+            cleaned = re.sub(r'```json\s*|\s*```', '', response.choices[0].message.content.strip(), flags=re.DOTALL)
+            if not cleaned: raise ValueError("Respons JSON kosong.")
+            data = json.loads(cleaned)
+            logger.info("AI (AgentRouter) berhasil generate.")
+            return data.get("steps")
+        except Exception as e:
+            logger.warning(f"Template Creator: AgentRouter gagal: {e}")
+            await asyncio.sleep(1)
+            return None
+
+    async def _get_ai_analysis(self, theme: str, details: str, language: str) -> Optional[List[Dict]]:
+        """Menggunakan AI untuk generate langkah-langkah RP dengan fallback lengkap."""
+        prompt = AI_TEMPLATE_PROMPT.format(theme=theme, details=details, language=language)
+        steps = None
+
+        # Urutan Fallback: OpenRouter -> AgentRouter -> Gemini -> Deepseek -> OpenAI
+        steps = await self._try_openrouter(prompt)
+        if not steps: steps = await self._try_agentrouter(prompt)
+        if not steps: steps = await self._try_gemini(prompt)
+        if not steps: steps = await self._try_deepseek(prompt)
+        if not steps: steps = await self._try_openai(prompt)
+
+        if not steps:
+            logger.error("Semua AI gagal untuk Template Creator.")
+        return steps
+    # --- [AKHIR PERBAIKAN] ---
 
     def _format_pc_auto_rp(self, title: str, modifier: str, primary_key: str, steps: List[Dict]) -> str:
         output = f"TITLE:{title}\nMODIFIER:{modifier}\nPRIMARY_KEY:{primary_key}\n"
@@ -448,10 +525,9 @@ class TemplateCreatorCog(commands.Cog, name="TemplateCreator"):
         output += "END_GUN_MACRO\n"; return output
 
     @commands.command(name="buatrp")
-    @commands.cooldown(1, 30, commands.BucketType.user) # Tambahkan cooldown
+    @commands.cooldown(1, 30, commands.BucketType.user)
     async def create_template_command(self, ctx):
         """Membuat template Auto RP untuk KotkaHelper (PC/Mobile)"""
-        # --- [BARU REQ #3] Cek Limitasi AI ---
         can_use, remaining, limit = check_ai_limit(ctx.author.id)
         if not can_use:
             rank = get_user_rank(ctx.author.id)
@@ -460,10 +536,8 @@ class TemplateCreatorCog(commands.Cog, name="TemplateCreator"):
             await ctx.send(
                 f"❌ Batas harian AI Anda (Rank: **{rank.title()}**) untuk membuat Template RP telah tercapai ({usage_today}/{limit_display}). Coba lagi besok."
             )
-            # Reset cooldown jika gagal karena limit
             ctx.command.reset_cooldown(ctx)
             return
-        # --- [AKHIR PERBAIKAN] ---
 
         if ctx.author.id in self.active_sessions:
             return await ctx.send("❌ Sesi aktif. Selesaikan/tunggu timeout.", delete_after=10)
@@ -472,7 +546,6 @@ class TemplateCreatorCog(commands.Cog, name="TemplateCreator"):
         modal_msg = None
 
         try:
-            # Langkah 1: Pilih Tipe Macro
             embed_type = discord.Embed(
                 title="🎨 KotkaHelper Template Creator",
                 description=f"**Langkah 1/3:** Pilih tipe macro (Format KHP)", color=0x5865F2
@@ -558,7 +631,7 @@ class TemplateCreatorCog(commands.Cog, name="TemplateCreator"):
 
                 self.active_sessions[ctx.author.id]["language"] = modal.language_value
                 if self.active_sessions[ctx.author.id]["action"] == "both":
-                    if not modal.theme_draw_value or not modal.theme_holster_value: # Cek jika tema kosong (cancel)
+                    if not modal.theme_draw_value or not modal.theme_holster_value:
                         await modal_msg.edit(content="Pembuatan template dibatalkan.", view=None)
                         return
                     self.active_sessions[ctx.author.id].update({
@@ -566,7 +639,7 @@ class TemplateCreatorCog(commands.Cog, name="TemplateCreator"):
                         "theme_holster": modal.theme_holster_value, "details_holster": modal.details_holster_value
                     })
                 else:
-                    if not modal.theme_value: # Cek jika tema kosong (cancel)
+                    if not modal.theme_value:
                         await modal_msg.edit(content="Pembuatan template dibatalkan.", view=None)
                         return
                     self.active_sessions[ctx.author.id].update({
@@ -608,17 +681,15 @@ class TemplateCreatorCog(commands.Cog, name="TemplateCreator"):
                 steps_draw = await self._get_ai_analysis(theme_d, details_d, language)
                 await loading_msg.edit(content=f"🤖 Generating 'Simpan' ({language})...")
                 steps_holster = await self._get_ai_analysis(theme_h, details_h, language)
-                if not steps_draw or not steps_holster: raise Exception("AI Gagal (Both)")
+                if not steps_draw or not steps_holster: raise Exception("AI Gagal Generate (Both Actions)")
             else:
                 theme = session.get("theme", "rp")
                 details = session.get("details", "")
                 await loading_msg.edit(content=f"🤖 Generating RP ({language})...")
                 steps_single = await self._get_ai_analysis(theme, details, language)
-                if not steps_single: raise Exception("AI Gagal (Single)")
+                if not steps_single: raise Exception("AI Gagal Generate (Single Action)")
 
-            # --- [BARU REQ #3] Tambah hitungan AI usage SETELAH AI berhasil ---
             increment_ai_usage(ctx.author.id)
-            # --- [AKHIR PERBAIKAN] ---
 
             session = self.active_sessions[ctx.author.id] # Refresh
             theme_display = "N/A"
@@ -648,7 +719,7 @@ class TemplateCreatorCog(commands.Cog, name="TemplateCreator"):
                 else:
                     title = f"RP {session['theme'][:30]}"
                     output = self._format_pc_gun_rp(title, session["weapon_id"], action, steps_single)
-                    filename = "KotkaHelper_GunRP.txt" # Nama file sama untuk draw/holster
+                    filename = "KotkaHelper_GunRP.txt"
                     theme_display = session['theme']
                     footer_text = f"AI ({language}) • {len(steps_single)} langkah"
                 filename = "KotkaHelper_GunRP.txt"
@@ -681,7 +752,12 @@ class TemplateCreatorCog(commands.Cog, name="TemplateCreator"):
         except Exception as e:
             logger.error(f"Error alur konfigurasi !buatrp: {e}", exc_info=True)
             try:
+                # --- [PERBAIKAN] Pesan error lebih informatif ---
                 error_msg = f"❌ Terjadi error: {e}"
+                if "AI Gagal Generate" in str(e):
+                    error_msg = "❌ Semua layanan AI sedang bermasalah atau gagal dihubungi. Coba lagi nanti."
+                # --- [AKHIR PERBAIKAN] ---
+
                 if modal_msg and not modal_msg.is_done():
                     await modal_msg.edit(content=error_msg, view=None)
                 elif 'loading_msg' in locals() and loading_msg:
@@ -691,7 +767,6 @@ class TemplateCreatorCog(commands.Cog, name="TemplateCreator"):
             except Exception as e_inner:
                 logger.error(f"Gagal kirim error cleanup !buatrp: {e_inner}")
                 await ctx.send(f"❌ Terjadi error: {e}") # Fallback
-            # Reset cooldown jika gagal karena error
             ctx.command.reset_cooldown(ctx)
 
         finally:
@@ -738,13 +813,11 @@ class TemplateCreatorCog(commands.Cog, name="TemplateCreator"):
     @commands.Cog.listener()
     async def on_command_error(self, ctx, error):
         """Error handler untuk Template Creator"""
-        if ctx.cog is not self: return # Hanya tangani error dari cog ini
+        if ctx.cog is not self: return
 
-        # Hanya tangani error untuk command !buatrp dan !rphelp
         if ctx.command and ctx.command.name in ['buatrp', 'rphelp']:
-            if isinstance(error, commands.CommandNotFound): return # Abaikan jika command tidak ditemukan
+            if isinstance(error, commands.CommandNotFound): return
 
-            # Hapus sesi jika error terjadi saat command berjalan
             if ctx.author.id in self.active_sessions:
                 del self.active_sessions[ctx.author.id]
                 logger.info(f"Sesi !buatrp for {ctx.author.id} dibersihkan karena error: {error}")
