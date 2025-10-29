@@ -10,6 +10,13 @@ from typing import Optional, Dict, List
 import httpx
 from openai import AsyncOpenAI
 import google.generativeai as genai
+import io # Import io untuk file buffer
+import itertools # Import itertools untuk key cycling
+
+# --- [BARU REQ #3] Import database untuk limit AI ---
+from utils.database import check_ai_limit, increment_ai_usage, get_user_rank
+# --- [AKHIR PERBAIKAN] ---
+
 
 logger = logging.getLogger(__name__)
 
@@ -129,7 +136,7 @@ class WeaponSelectView(discord.ui.View):
             options=[
                 discord.SelectOption(label=f"{name} (ID: {wid})", value=str(wid))
                 for wid, name in WEAPON_LIST.items()
-            ][:25]
+            ][:25] # Batasi 25 opsi (maks Discord)
         )
         select.callback = self.weapon_callback
         self.add_item(select)
@@ -341,32 +348,49 @@ class TemplateCreatorCog(commands.Cog, name="TemplateCreator"):
         self.bot = bot
         self.config = bot.config
         self.active_sessions = {}
+        # Tambahkan key cyclers
+        self.gemini_key_cycler = itertools.cycle(self.config.GEMINI_API_KEYS) if self.config.GEMINI_API_KEYS else None
+        self.deepseek_key_cycler = itertools.cycle(self.config.DEEPSEEK_API_KEYS) if self.config.DEEPSEEK_API_KEYS else None
+        self.openai_key_cycler = itertools.cycle(self.config.OPENAI_API_KEYS) if self.config.OPENAI_API_KEYS else None
+
 
     async def _get_ai_analysis(self, theme: str, details: str, language: str) -> Optional[List[Dict]]:
         """Menggunakan AI untuk generate langkah-langkah RP dalam bahasa yang diminta."""
         prompt = AI_TEMPLATE_PROMPT.format(theme=theme, details=details, language=language)
         logger.info(f"Mengirim prompt ke AI (Bahasa: {language})")
 
-        if self.config.GEMINI_API_KEYS:
+        # Fallback Logic
+        if self.gemini_key_cycler:
             try:
-                genai.configure(api_key=self.config.GEMINI_API_KEYS[0])
+                key = next(self.gemini_key_cycler)
+                genai.configure(api_key=key)
                 model = genai.GenerativeModel('gemini-1.5-flash')
                 response = await model.generate_content_async(
                     prompt,
                     generation_config=genai.types.GenerationConfig(
-                        response_mime_type="application/json"
-                    )
+                        response_mime_type="application/json", temperature=0.7 # Tambah temperature
+                    ),
+                    request_options={"timeout": 60} # Tambah timeout
                 )
+                if response.prompt_feedback.block_reason:
+                    raise Exception(f"Gemini diblokir: {response.prompt_feedback.block_reason.name}")
+                if response.candidates and response.candidates[0].finish_reason.name != "STOP":
+                     raise Exception(f"Gemini finish reason: {response.candidates[0].finish_reason.name}")
+
                 cleaned = re.sub(r'```json\s*|\s*```', '', response.text.strip(), flags=re.DOTALL)
+                if not cleaned: raise ValueError("Respons JSON dari Gemini kosong.")
+
                 data = json.loads(cleaned)
                 logger.info("AI (Gemini) berhasil generate.")
                 return data.get("steps", [])
             except Exception as e:
-                logger.warning(f"Gemini gagal: {e}")
+                logger.warning(f"Template Creator: Gemini gagal: {e}")
+                await asyncio.sleep(1)
 
-        if self.config.DEEPSEEK_API_KEYS:
+        if self.deepseek_key_cycler:
             try:
-                async with httpx.AsyncClient(timeout=20.0) as client:
+                key = next(self.deepseek_key_cycler)
+                async with httpx.AsyncClient(timeout=40.0) as client: # Tambah timeout
                     response = await client.post(
                         "https://api.deepseek.com/chat/completions",
                         json={
@@ -375,31 +399,38 @@ class TemplateCreatorCog(commands.Cog, name="TemplateCreator"):
                             "response_format": {"type": "json_object"},
                             "temperature": 0.7
                         },
-                        headers={"Authorization": f"Bearer {self.config.DEEPSEEK_API_KEYS[0]}"}
+                        headers={"Authorization": f"Bearer {key}"}
                     )
                     response.raise_for_status()
-                    data = json.loads(response.json()["choices"][0]["message"]["content"])
+                    cleaned = re.sub(r'```json\s*|\s*```', '', response.json()["choices"][0]["message"]["content"].strip(), flags=re.DOTALL)
+                    if not cleaned: raise ValueError("Respons JSON dari Deepseek kosong.")
+                    data = json.loads(cleaned)
                     logger.info("AI (DeepSeek) berhasil generate.")
                     return data.get("steps", [])
             except Exception as e:
-                logger.warning(f"DeepSeek gagal: {e}")
+                logger.warning(f"Template Creator: DeepSeek gagal: {e}")
+                await asyncio.sleep(1)
 
-        if self.config.OPENAI_API_KEYS:
+        if self.openai_key_cycler:
             try:
-                client = AsyncOpenAI(api_key=self.config.OPENAI_API_KEYS[0])
+                key = next(self.openai_key_cycler)
+                client = AsyncOpenAI(api_key=key, timeout=30.0) # Tambah timeout
                 response = await client.chat.completions.create(
                     model="gpt-4o-mini",
                     messages=[{"role": "user", "content": prompt}],
                     response_format={"type": "json_object"},
                     temperature=0.7
                 )
-                data = json.loads(response.choices[0].message.content)
+                cleaned = re.sub(r'```json\s*|\s*```', '', response.choices[0].message.content.strip(), flags=re.DOTALL)
+                if not cleaned: raise ValueError("Respons JSON dari OpenAI kosong.")
+                data = json.loads(cleaned)
                 logger.info("AI (OpenAI) berhasil generate.")
                 return data.get("steps", [])
             except Exception as e:
-                logger.error(f"OpenAI gagal: {e}")
+                logger.error(f"Template Creator: OpenAI GAGAL (fallback terakhir): {e}")
 
-        return None
+        logger.error("Semua AI gagal untuk Template Creator.")
+        return None # Return None jika semua gagal
 
     def _format_pc_auto_rp(self, title: str, modifier: str, primary_key: str, steps: List[Dict]) -> str:
         output = f"TITLE:{title}\nMODIFIER:{modifier}\nPRIMARY_KEY:{primary_key}\n"
@@ -417,15 +448,29 @@ class TemplateCreatorCog(commands.Cog, name="TemplateCreator"):
         output += "END_GUN_MACRO\n"; return output
 
     @commands.command(name="buatrp")
+    @commands.cooldown(1, 30, commands.BucketType.user) # Tambahkan cooldown
     async def create_template_command(self, ctx):
         """Membuat template Auto RP untuk KotkaHelper (PC/Mobile)"""
+        # --- [BARU REQ #3] Cek Limitasi AI ---
+        can_use, remaining, limit = check_ai_limit(ctx.author.id)
+        if not can_use:
+            rank = get_user_rank(ctx.author.id)
+            limit_display = "Unlimited" if limit == -1 else limit
+            usage_today = (limit - remaining) if limit > 0 else 0
+            await ctx.send(
+                f"❌ Batas harian AI Anda (Rank: **{rank.title()}**) untuk membuat Template RP telah tercapai ({usage_today}/{limit_display}). Coba lagi besok."
+            )
+            # Reset cooldown jika gagal karena limit
+            ctx.command.reset_cooldown(ctx)
+            return
+        # --- [AKHIR PERBAIKAN] ---
+
         if ctx.author.id in self.active_sessions:
             return await ctx.send("❌ Sesi aktif. Selesaikan/tunggu timeout.", delete_after=10)
 
-        # --- PERBAIKAN: Sesi dibuat di dalam try...finally ---
         self.active_sessions[ctx.author.id] = {}
-        modal_msg = None # Definisikan di luar try
-        
+        modal_msg = None
+
         try:
             # Langkah 1: Pilih Tipe Macro
             embed_type = discord.Embed(
@@ -442,14 +487,13 @@ class TemplateCreatorCog(commands.Cog, name="TemplateCreator"):
             await type_view.wait()
             if not type_view.macro_type:
                 await type_msg.edit(content="⏱️ Timeout.", embed=None, view=None)
-                return # Finally block akan membersihkan sesi
+                return
 
             macro_type = type_view.macro_type
             self.active_sessions[ctx.author.id]["macro_type"] = macro_type
             await type_msg.delete()
-            
-            # --- Alur Utama ---
-            class OpenModalView(discord.ui.View): # Kelas view pembuka modal generik
+
+            class OpenModalView(discord.ui.View):
                     def __init__(self, author_id, button_label):
                         super().__init__(timeout=180)
                         self.author_id = author_id
@@ -465,25 +509,20 @@ class TemplateCreatorCog(commands.Cog, name="TemplateCreator"):
                         return True
 
                     async def open_modal_btn(self, interaction: discord.Interaction):
-                        # Disable tombol agar tidak bisa diklik lagi
-                        for item in self.children:
-                            item.disabled = True
-                        try:
-                            await interaction.message.edit(view=self)
-                        except discord.NotFound:
-                            pass 
+                        for item in self.children: item.disabled = True
+                        try: await interaction.message.edit(view=self)
+                        except discord.NotFound: pass
                         self.interaction = interaction
                         self.stop()
 
             if macro_type == "gun":
-                # Langkah 2 (Gun RP): Pilih Senjata
                 weapon_view = WeaponSelectView(ctx.author.id)
                 weapon_msg = await ctx.send("🔫 **Langkah 2/3:** Pilih senjata:", view=weapon_view)
                 await weapon_view.wait()
                 if not weapon_view.weapon_id or not weapon_view.action:
                     await weapon_msg.edit(content="⏱️ Timeout.", view=None)
-                    return # Finally block akan membersihkan sesi
-                
+                    return
+
                 self.active_sessions[ctx.author.id].update({
                     "weapon_id": weapon_view.weapon_id, "action": weapon_view.action
                 })
@@ -496,48 +535,49 @@ class TemplateCreatorCog(commands.Cog, name="TemplateCreator"):
                     modal = WeaponConfigModal()
                     modal_button_label = f"📝 Isi Tema '{weapon_view.action}' (Langkah 3/3)"
 
-            else: # Auto RP atau CMD Macro
+            else:
                 modal_title = "Konfigurasi Auto RP Macro" if macro_type == "auto_rp" else "Konfigurasi CMD Macro"
                 modal = ConfigInputModal(macro_type, modal_title)
                 modal_button_label = "📝 Isi Konfigurasi & Tema (Langkah 2&3/3)"
 
-            # Langkah Terakhir (Semua Tipe): Buka Modal
             view = OpenModalView(ctx.author.id, modal_button_label)
             modal_msg = await ctx.send(f"{ctx.author.mention}, klik tombol:", view=view)
             await view.wait()
 
             if not view.interaction:
                 await modal_msg.edit(content="⏱️ Timeout.", view=None)
-                return # Finally block akan membersihkan sesi
+                return
 
             await view.interaction.response.send_modal(modal)
-            await modal.wait() # Tunggu modal di-submit
+            await modal.wait()
 
-            # --- PERBAIKAN: Cek modal cancel dan return ---
-            # Jika modal dibatalkan, `theme_value` atau `language_value` akan None
             if macro_type == "gun":
                 if not modal.language_value:
                     await modal_msg.edit(content="Pembuatan template dibatalkan.", view=None)
-                    return # Finally block akan membersihkan sesi
-                
-                # Simpan hasil modal jika sukses
+                    return
+
                 self.active_sessions[ctx.author.id]["language"] = modal.language_value
                 if self.active_sessions[ctx.author.id]["action"] == "both":
+                    if not modal.theme_draw_value or not modal.theme_holster_value: # Cek jika tema kosong (cancel)
+                        await modal_msg.edit(content="Pembuatan template dibatalkan.", view=None)
+                        return
                     self.active_sessions[ctx.author.id].update({
                         "theme_draw": modal.theme_draw_value, "details_draw": modal.details_draw_value,
                         "theme_holster": modal.theme_holster_value, "details_holster": modal.details_holster_value
                     })
                 else:
+                    if not modal.theme_value: # Cek jika tema kosong (cancel)
+                        await modal_msg.edit(content="Pembuatan template dibatalkan.", view=None)
+                        return
                     self.active_sessions[ctx.author.id].update({
                         "theme": modal.theme_value, "details": modal.details_value
                     })
-            
-            else: # Auto RP / CMD
+
+            else:
                 if not modal.theme_value:
                     await modal_msg.edit(content="Pembuatan template dibatalkan.", view=None)
-                    return # Finally block akan membersihkan sesi
-                
-                # Simpan hasil modal jika sukses
+                    return
+
                 self.active_sessions[ctx.author.id].update({
                     "theme": modal.theme_value, "details": modal.details_value,
                     "language": modal.language_value
@@ -549,18 +589,15 @@ class TemplateCreatorCog(commands.Cog, name="TemplateCreator"):
                 elif macro_type == "cmd":
                     self.active_sessions[ctx.author.id]["command"] = modal.config_value
 
-            # Hapus pesan tombol jika lolos submit
             await modal_msg.delete()
-            modal_msg = None # Set ke None agar finally tidak error
+            modal_msg = None
 
-            # --- Generate AI ---
             session = self.active_sessions.get(ctx.author.id)
-            if not session: 
-                raise Exception("Sesi tidak ditemukan setelah modal submit.")
+            if not session: raise Exception("Sesi tidak ditemukan setelah modal submit.")
 
             loading_msg = await ctx.send("🤖 **Generating AI...**")
             steps_draw, steps_holster, steps_single = None, None, None
-            language = session.get("language", "Bahasa Indonesia baku") # Ambil bahasa dari sesi
+            language = session.get("language", "Bahasa Indonesia baku")
 
             if session.get("macro_type") == "gun" and session.get("action") == "both":
                 theme_d = session.get("theme_draw", "mengeluarkan")
@@ -579,9 +616,12 @@ class TemplateCreatorCog(commands.Cog, name="TemplateCreator"):
                 steps_single = await self._get_ai_analysis(theme, details, language)
                 if not steps_single: raise Exception("AI Gagal (Single)")
 
-            # --- Format & Kirim Hasil ---
+            # --- [BARU REQ #3] Tambah hitungan AI usage SETELAH AI berhasil ---
+            increment_ai_usage(ctx.author.id)
+            # --- [AKHIR PERBAIKAN] ---
+
             session = self.active_sessions[ctx.author.id] # Refresh
-            theme_display = "N/A" # Fallback
+            theme_display = "N/A"
 
             if macro_type == "auto_rp":
                 title = f"RP {session['theme'][:30]}"
@@ -608,10 +648,10 @@ class TemplateCreatorCog(commands.Cog, name="TemplateCreator"):
                 else:
                     title = f"RP {session['theme'][:30]}"
                     output = self._format_pc_gun_rp(title, session["weapon_id"], action, steps_single)
-                    filename = "KotkaHelper_GunRP.txt"
+                    filename = "KotkaHelper_GunRP.txt" # Nama file sama untuk draw/holster
                     theme_display = session['theme']
                     footer_text = f"AI ({language}) • {len(steps_single)} langkah"
-                filename = "KotkaHelper_GunRP.txt" 
+                filename = "KotkaHelper_GunRP.txt"
 
             embed_result = discord.Embed(
                 title="✅ Template Berhasil Dibuat!",
@@ -629,7 +669,6 @@ class TemplateCreatorCog(commands.Cog, name="TemplateCreator"):
             )
             embed_result.set_footer(text=footer_text)
 
-            import io
             file_content = output.encode('utf-8')
             file_buffer = io.BytesIO(file_content)
             file_buffer.seek(0)
@@ -640,21 +679,22 @@ class TemplateCreatorCog(commands.Cog, name="TemplateCreator"):
             logger.info(f"Template '{macro_type}' by {ctx.author.id} ({language})")
 
         except Exception as e:
-            logger.error(f"Error alur konfigurasi: {e}", exc_info=True)
+            logger.error(f"Error alur konfigurasi !buatrp: {e}", exc_info=True)
             try:
-                # Coba edit pesan yang ada jika gagal
                 error_msg = f"❌ Terjadi error: {e}"
                 if modal_msg and not modal_msg.is_done():
                     await modal_msg.edit(content=error_msg, view=None)
+                elif 'loading_msg' in locals() and loading_msg:
+                     await loading_msg.edit(content=error_msg, embed=None, view=None, attachments=[])
                 else:
                     await ctx.send(error_msg)
             except Exception as e_inner:
-                logger.error(f"Gagal kirim error cleanup: {e_inner}")
+                logger.error(f"Gagal kirim error cleanup !buatrp: {e_inner}")
                 await ctx.send(f"❌ Terjadi error: {e}") # Fallback
-        
+            # Reset cooldown jika gagal karena error
+            ctx.command.reset_cooldown(ctx)
+
         finally:
-            # --- PERBAIKAN: Blok Finally ---
-            # Blok ini akan *selalu* berjalan, tidak peduli fungsi 'return' atau 'raise Exception'
             if ctx.author.id in self.active_sessions:
                 del self.active_sessions[ctx.author.id]
                 logger.info(f"Sesi !buatrp for {ctx.author.id} dibersihkan.")
@@ -698,23 +738,33 @@ class TemplateCreatorCog(commands.Cog, name="TemplateCreator"):
     @commands.Cog.listener()
     async def on_command_error(self, ctx, error):
         """Error handler untuk Template Creator"""
-        if ctx.command and ctx.command.name not in ['buatrp', 'templatehelp']: return 
-        if isinstance(error, commands.CommandNotFound): return
-        
-        # --- PERBAIKAN: Hapus pembersihan sesi di sini ---
-        # Pembersihan sesi sekarang ditangani oleh try...finally di dalam command
-        # if ctx.author.id in self.active_sessions: del self.active_sessions[ctx.author.id]
+        if ctx.cog is not self: return # Hanya tangani error dari cog ini
 
-        if isinstance(error, commands.CommandInvokeError):
-            if isinstance(error.original, discord.NotFound):
-                logger.warning(f"Error NotFound (interaksi timeout?): {error.original}")
-                await ctx.send("❌ Interaksi timeout/tidak valid. Coba lagi `!buatrp`.")
+        # Hanya tangani error untuk command !buatrp dan !rphelp
+        if ctx.command and ctx.command.name in ['buatrp', 'rphelp']:
+            if isinstance(error, commands.CommandNotFound): return # Abaikan jika command tidak ditemukan
+
+            # Hapus sesi jika error terjadi saat command berjalan
+            if ctx.author.id in self.active_sessions:
+                del self.active_sessions[ctx.author.id]
+                logger.info(f"Sesi !buatrp for {ctx.author.id} dibersihkan karena error: {error}")
+
+            if isinstance(error, commands.CommandInvokeError):
+                if isinstance(error.original, discord.NotFound):
+                    logger.warning(f"Error NotFound (interaksi timeout?): {error.original}")
+                    try: await ctx.send("❌ Interaksi timeout/tidak valid. Coba lagi `!buatrp`.")
+                    except: pass
+                else:
+                    logger.error(f"Error di {ctx.command.name}: {error.original}", exc_info=True)
+                    try: await ctx.send(f"❌ Error: `{str(error.original)[:200]}`")
+                    except: pass
+            elif isinstance(error, commands.CommandOnCooldown):
+                 try: await ctx.send(f"⏳ Cooldown. Coba lagi dalam **{error.retry_after:.1f} detik**.", delete_after=10)
+                 except: pass
             else:
-                logger.error(f"Error di {ctx.command.name}: {error.original}", exc_info=True)
-                await ctx.send(f"❌ Error: `{str(error.original)[:200]}`")
-        else:
-            logger.error(f"Error tak terduga: {error}", exc_info=True)
-            await ctx.send("❌ Error tak terduga.")
+                logger.error(f"Error tak terduga: {error}", exc_info=True)
+                try: await ctx.send("❌ Error tak terduga.")
+                except: pass
 
 
     def cog_unload(self):
