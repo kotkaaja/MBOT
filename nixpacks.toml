@@ -1,0 +1,16 @@
+# File: nixpacks.toml
+# Konfigurasi ini memberitahu Railway/Nixpacks untuk menginstal Google Chrome DAN Font Microsoft
+
+[phases.setup]
+# 1. Instal paket dasar + paket font MS + accept EULA
+aptPackages = ["wget", "gnupg", "ttf-mscorefonts-installer", "debconf-utils"]
+
+# 2. Setuju EULA font secara otomatis SEBELUM instalasi
+#    dan jalankan perintah instal Chrome
+cmds = [
+    "echo ttf-mscorefonts-installer msttcorefonts/accepted-mscorefonts-eula select true | debconf-set-selections", # <-- TAMBAHKAN BARIS INI
+    "wget -q -O - https://dl-ssl.google.com/linux/linux_signing_key.pub | apt-key add -",
+    "sh -c 'echo \"deb [arch=amd64] http://dl.google.com/linux/chrome/deb/ stable main\" >> /etc/apt/sources.list.d/google-chrome.list'",
+    "apt-get update",
+    "apt-get install -y google-chrome-stable ttf-mscorefonts-installer" # <-- Pastikan ttf-mscorefonts-installer ada di sini juga
+]
