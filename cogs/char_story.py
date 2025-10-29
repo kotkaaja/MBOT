@@ -1,3 +1,4 @@
+
 import discord
 from discord.ext import commands
 from discord import ui
@@ -447,7 +448,7 @@ class CharacterStoryCog(commands.Cog, name="CharacterStory"):
         if not self.bot.config.OPENAI_API_KEYS:
             raise Exception("API Key OpenAI tidak dikonfigurasi.")
 
-        api_key = self.bot.config.OPENAI_API_KEYS[0]
+        api_key = self.bot.config.OPENAI_API_KEYS[0] # Menggunakan key pertama dari daftar
         client = AsyncOpenAI(api_key=api_key)
 
         server_rules = SERVER_CONFIG[server]["rules"]
@@ -525,3 +526,4 @@ async def setup(bot):
     if not hasattr(bot, 'persistent_views_added'):
         bot.persistent_views_added = False
     await bot.add_cog(CharacterStoryCog(bot))
+
