@@ -1,25 +1,25 @@
-
 import discord
 from discord.ext import commands
 from discord import ui
 from openai import AsyncOpenAI
+import google.generativeai as genai # Import Gemini
+import httpx # Import httpx untuk Deepseek
 import logging
-from typing import Dict
+from typing import Dict, Optional, List # Tambahkan Optional, List
 import io
+import re # Import re untuk membersihkan output JSON
+import json # Import json
+import itertools # Import itertools
 
 # Import fungsi database untuk cooldown
-# --- [PERBAIKAN REQ #3]: Ganti check/set cooldown lama dengan check/increment AI limit baru ---
 from utils.database import check_ai_limit, increment_ai_usage, get_user_rank
-# --- [AKHIR PERBAIKAN] ---
 
 # Mengambil logger
 logger = logging.getLogger(__name__)
 
 # ============================
-# DICTIONARY UNTUK PROMPT DAN FORMAT
+# DICTIONARY UNTUK PROMPT DAN FORMAT (Tetap sama)
 # ============================
-
-# Menyimpan aturan spesifik dan format untuk setiap server
 SERVER_CONFIG = {
     "ssrp": {
         "name": "SSRP",
@@ -151,7 +151,6 @@ g. Hubungan kekerabatan = Ayah, Ibu, Kakak, Adik. Namun, apabila terdapat tambah
 
 **Tag** : <@&1212085960418791464>"""
     },
-    # --- PENAMBAHAN RELATIVE RP DIMULAI DARI SINI ---
     "relativerp": {
         "name": "Relative RP",
         "rules": """- Pembuatan character story tidak dibatasi level, kalian bisa membuat cs walaupun masih level 1.
@@ -213,7 +212,6 @@ STORY :
 [•] Penulisan Nama di dalam cerita tidak boleh menggunakan tanda (_), agar terlihat rapih.
 [•] Akhiri setiap paragraf dengan tanda baca (.), Karna banyaknya baris per paragraf dihitung dari kalimat yang diakhiri tanda baca (.).
 [•] Alur cerita tidak boleh terlalu cepat, ceritakan karakter kalian dari kecil hingga menjadi seperti sekarang.""",
-        # Menggunakan format yang sama dengan JGRP sesuai permintaan
         "format": """**__FORMAT SEMENTARA REQUEST CS | FMRP__**
 - Nama karakter : {nama_char}
 - Level karakter : {level}
@@ -225,14 +223,12 @@ STORY :
 
 {story}"""
     }
-    # --- AKHIR PENAMBAHAN ---
 }
 
 # ============================
-# UI COMPONENTS (MODAL & VIEWS)
+# UI COMPONENTS (MODAL & VIEWS) - Tetap sama
 # ============================
 
-# Modal Bagian 2: Mengumpulkan detail cerita yang lebih dalam
 class CSInputModal_Part2(ui.Modal):
     bakat_dominan = ui.TextInput(label="Bakat/Keahlian Dominan Karakter", placeholder="Contoh: Penembak jitu, negosiator ulung, pembalap liar", style=discord.TextStyle.short, required=True)
     culture = ui.TextInput(label="Kultur/Etnis (Opsional)", placeholder="Contoh: African-American, Hispanic, Italian-American", style=discord.TextStyle.short, required=False)
@@ -246,14 +242,10 @@ class CSInputModal_Part2(ui.Modal):
         self.part1_data = part1_data
 
     async def on_submit(self, interaction: discord.Interaction):
-        # Tampilkan status "thinking" secara publik
         await interaction.response.defer()
-
-        # Kirim pesan bahwa proses sedang berjalan
         processing_msg = await interaction.followup.send(f"⏳ Character Story untuk **{self.part1_data['nama_char']}** sedang diproses oleh AI...")
 
         try:
-            # Gabungkan data dari formulir bagian 1 dan 2
             all_data = self.part1_data.copy()
             all_data.update({
                 "bakat": self.bakat_dominan.value,
@@ -263,10 +255,12 @@ class CSInputModal_Part2(ui.Modal):
                 "story_type": self.story_type,
             })
 
-            # Panggil AI untuk menghasilkan cerita
             story_text = await self.bot.get_cog("CharacterStory").generate_story_from_ai(**all_data)
+            # --- [BARU] Periksa jika AI gagal ---
+            if story_text is None:
+                raise Exception("Semua layanan AI gagal dihubungi atau error.")
+            # --- [AKHIR PERBAIKAN] ---
 
-            # Format output sesuai server
             server_format = SERVER_CONFIG[self.server]["format"]
             final_cs = server_format.format(
                 nama_char=all_data['nama_char'],
@@ -277,7 +271,6 @@ class CSInputModal_Part2(ui.Modal):
                 jenis_kelamin=all_data['jenis_kelamin']
             )
 
-            # Buat embed untuk hasil
             embed = discord.Embed(
                 title=f"✅ Character Story Selesai: {all_data['nama_char']}",
                 description="Cerita Anda telah berhasil dibuat. Silakan unduh file `.txt` di bawah ini dan lengkapi bagian yang diperlukan.",
@@ -287,32 +280,31 @@ class CSInputModal_Part2(ui.Modal):
             embed.add_field(name="Sisi Cerita", value=self.story_type.replace("_", " ").title(), inline=True)
             embed.set_footer(text=f"Diminta oleh: {interaction.user.display_name}")
 
-            # Buat file .txt dalam memori
             story_file = discord.File(
                 io.StringIO(final_cs),
                 filename=f"CS_{all_data['nama_char'].replace(' ', '_')}.txt"
             )
 
-            # Edit pesan proses dengan hasil akhir (embed + file)
             await processing_msg.edit(
                 content=f"Character Story untuk **{all_data['nama_char']}**, diminta oleh {interaction.user.mention}:",
                 embed=embed,
                 attachments=[story_file]
             )
 
-            # --- [PERBAIKAN REQ #3] Tambah hitungan AI usage SETELAH AI berhasil ---
             increment_ai_usage(interaction.user.id)
-            # --- [AKHIR PERBAIKAN] ---
 
         except Exception as e:
-            logger.error(f"Gagal membuat CS dengan OpenAI: {e}", exc_info=True)
-            error_msg = "❌ Terjadi kesalahan saat menghubungi AI. Pastikan API Key valid dan memiliki kuota."
+            logger.error(f"Gagal membuat CS: {e}", exc_info=True)
+            # --- [PERBAIKAN] Pesan error lebih informatif ---
+            error_msg = f"❌ Terjadi kesalahan: {e}"
+            if "Semua layanan AI gagal" in str(e):
+                error_msg = "❌ Semua layanan AI sedang bermasalah atau gagal dihubungi. Coba lagi nanti."
+            # --- [AKHIR PERBAIKAN] ---
             await processing_msg.edit(content=error_msg, embed=None, view=None, attachments=[])
 
-# View untuk tombol Lanjutkan ke Bagian 2
 class ContinueToPart2View(ui.View):
     def __init__(self, server: str, story_type: str, bot_instance, part1_data: Dict):
-        super().__init__(timeout=300) # 5 menit timeout
+        super().__init__(timeout=300)
         self.server = server
         self.story_type = story_type
         self.bot = bot_instance
@@ -320,18 +312,15 @@ class ContinueToPart2View(ui.View):
 
     @ui.button(label="Lanjutkan ke Detail Cerita (2/2)", style=discord.ButtonStyle.primary, emoji="➡️")
     async def continue_button(self, interaction: discord.Interaction, button: ui.Button):
-        # Tombol ini membuat interaksi baru, jadi kita bisa mengirim modal
         await interaction.response.send_modal(CSInputModal_Part2(
             server=self.server,
             story_type=self.story_type,
             bot_instance=self.bot,
             part1_data=self.part1_data
         ))
-        # Hapus view setelah diklik agar tidak bisa digunakan lagi
         await interaction.message.edit(view=None)
         self.stop()
 
-# Modal Bagian 1: Mengumpulkan data dasar karakter
 class CSInputModal_Part1(ui.Modal):
     nama_char = ui.TextInput(label="Nama Lengkap Karakter (IC)", placeholder="Contoh: John Washington, Kenji Tanaka", style=discord.TextStyle.short, required=True)
     level = ui.TextInput(label="Level Karakter", placeholder="Contoh: 1", style=discord.TextStyle.short, required=True, max_length=3)
@@ -347,14 +336,12 @@ class CSInputModal_Part1(ui.Modal):
 
     async def on_submit(self, interaction: discord.Interaction):
         part1_data = {
-            # Langsung bersihkan nama dari underscore
             "nama_char": self.nama_char.value.replace('_', ' '),
             "level": self.level.value,
             "jenis_kelamin": self.jenis_kelamin.value,
             "tanggal_lahir": self.tanggal_lahir.value,
             "kota_asal": self.kota_asal.value,
         }
-        # Kirim pesan dengan tombol untuk membuka modal kedua
         view = ContinueToPart2View(
             server=self.server,
             story_type=self.story_type,
@@ -367,8 +354,6 @@ class CSInputModal_Part1(ui.Modal):
             ephemeral=True
         )
 
-
-# View untuk memilih tipe cerita (Goodside/Badside)
 class StoryTypeView(ui.View):
     def __init__(self, server: str, bot_instance):
         super().__init__(timeout=180)
@@ -383,7 +368,6 @@ class StoryTypeView(ui.View):
     async def bad_side(self, interaction: discord.Interaction, button: ui.Button):
         await interaction.response.send_modal(CSInputModal_Part1(server=self.server, story_type="bad_side", bot_instance=self.bot))
 
-# View untuk dropdown pemilihan server
 class ServerSelectionView(ui.View):
     def __init__(self, bot_instance):
         super().__init__(timeout=180)
@@ -401,7 +385,6 @@ class ServerSelectionView(ui.View):
             discord.SelectOption(label="Relative RP", value="relativerp", description="Buat CS untuk server Relative RP."),
             discord.SelectOption(label="JGRP", value="jgrp", description="Buat CS untuk server JGRP."),
             discord.SelectOption(label="FMRP", value="fmrp", description="Buat CS untuk server FAMERLONE RP.")
-            # --- AKHIR PENAMBAHAN ---,
         ],
         custom_id="server_select"
     )
@@ -409,7 +392,6 @@ class ServerSelectionView(ui.View):
         server_choice = select.values[0]
         await interaction.response.send_message("Pilih alur cerita untuk karaktermu:", view=StoryTypeView(server=server_choice, bot_instance=self.bot), ephemeral=True)
 
-# View utama yang berisi tombol untuk memulai proses
 class CSPanelView(ui.View):
     def __init__(self, bot_instance):
         super().__init__(timeout=None)
@@ -417,7 +399,6 @@ class CSPanelView(ui.View):
 
     @ui.button(label="Buat Character Story", style=discord.ButtonStyle.primary, emoji="📝", custom_id="create_cs_button")
     async def create_cs(self, interaction: discord.Interaction, button: ui.Button):
-        # --- [PERBAIKAN REQ #3]: Cek limit AI ---
         can_use, remaining, limit = check_ai_limit(interaction.user.id)
         if not can_use:
             rank = get_user_rank(interaction.user.id)
@@ -428,7 +409,6 @@ class CSPanelView(ui.View):
                 ephemeral=True
             )
             return
-        # --- [AKHIR PERBAIKAN] ---
 
         await interaction.response.send_message("Pilih server di mana karaktermu akan bermain:", view=ServerSelectionView(self.bot), ephemeral=True)
 
@@ -438,18 +418,18 @@ class CSPanelView(ui.View):
 class CharacterStoryCog(commands.Cog, name="CharacterStory"):
     def __init__(self, bot):
         self.bot = bot
+        # --- [BARU] Tambahkan key cyclers ---
+        self.openai_key_cycler = itertools.cycle(self.bot.config.OPENAI_API_KEYS) if self.bot.config.OPENAI_API_KEYS else None
+        self.gemini_key_cycler = itertools.cycle(self.bot.config.GEMINI_API_KEYS) if self.bot.config.GEMINI_API_KEYS else None
+        self.deepseek_key_cycler = itertools.cycle(self.bot.config.DEEPSEEK_API_KEYS) if self.bot.config.DEEPSEEK_API_KEYS else None
+        # --- [AKHIR PERBAIKAN] ---
+
         if not hasattr(bot, 'persistent_views_added') or not bot.persistent_views_added:
             bot.add_view(CSPanelView(bot))
             bot.persistent_views_added = True
 
-    async def generate_story_from_ai(self, server: str, nama_char: str, tanggal_lahir: str, kota_asal: str, story_type: str, bakat: str, culture: str, detail: str, jenis_kelamin: str, level: str) -> str:
-        """Menghasilkan story dari OpenAI berdasarkan input detail."""
-
-        if not self.bot.config.OPENAI_API_KEYS:
-            raise Exception("API Key OpenAI tidak dikonfigurasi.")
-
-        api_key = self.bot.config.OPENAI_API_KEYS[0] # Menggunakan key pertama dari daftar
-        client = AsyncOpenAI(api_key=api_key)
+    async def generate_story_from_ai(self, server: str, nama_char: str, tanggal_lahir: str, kota_asal: str, story_type: str, bakat: str, culture: str, detail: str, jenis_kelamin: str, level: str) -> Optional[str]:
+        """Menghasilkan story dari AI dengan fallback."""
 
         server_rules = SERVER_CONFIG[server]["rules"]
 
@@ -491,18 +471,86 @@ class CharacterStoryCog(commands.Cog, name="CharacterStory"):
         Output akhir harus berupa teks cerita saja dalam Bahasa Indonesia, tanpa judul atau format tambahan. Pastikan cerita yang dihasilkan menarik, konsisten, dan memenuhi semua aturan.
         """
 
-        logger.info(f"Mengirim prompt ke OpenAI untuk karakter {nama_char}...")
-        response = await client.chat.completions.create(
-            model="gpt-4o-mini",
-            messages=[{"role": "user", "content": prompt}],
-            temperature=0.75,
-            max_tokens=1200,
-        )
+        # --- [BARU] Fallback Logic ---
+        story_text = None
+        ai_used = "Tidak ada"
 
-        story_text = response.choices[0].message.content
-        cleaned_story = story_text.strip().replace("```", "")
+        # Coba Gemini
+        if self.gemini_key_cycler:
+            try:
+                key = next(self.gemini_key_cycler)
+                genai.configure(api_key=key)
+                model = genai.GenerativeModel('gemini-1.5-flash')
+                logger.info(f"Char Story: Mencoba Gemini...")
+                response = await model.generate_content_async(
+                    prompt,
+                    generation_config=genai.types.GenerationConfig(temperature=0.75), # Minta output teks biasa
+                    request_options={"timeout": 60}
+                )
+                if response.prompt_feedback.block_reason:
+                    raise Exception(f"Gemini diblokir: {response.prompt_feedback.block_reason.name}")
+                if response.candidates and response.candidates[0].finish_reason.name != "STOP":
+                     raise Exception(f"Gemini finish reason: {response.candidates[0].finish_reason.name}")
+                story_text = response.text
+                if story_text:
+                     ai_used = "Gemini"
+                     logger.info("AI (Gemini) berhasil generate Char Story.")
+            except Exception as e:
+                logger.warning(f"Char Story: Gemini gagal: {e}")
+                await asyncio.sleep(1)
 
-        return cleaned_story
+        # Coba Deepseek jika Gemini gagal
+        if not story_text and self.deepseek_key_cycler:
+            try:
+                key = next(self.deepseek_key_cycler)
+                async with httpx.AsyncClient(timeout=40.0) as client:
+                    logger.info(f"Char Story: Mencoba Deepseek...")
+                    response = await client.post(
+                        "https://api.deepseek.com/chat/completions",
+                        json={
+                            "model": "deepseek-chat",
+                            "messages": [{"role": "user", "content": prompt}],
+                            "temperature": 0.75,
+                            "max_tokens": 1200,
+                        },
+                        headers={"Authorization": f"Bearer {key}"}
+                    )
+                    response.raise_for_status()
+                    story_text = response.json()["choices"][0]["message"]["content"]
+                    if story_text:
+                        ai_used = "Deepseek"
+                        logger.info("AI (Deepseek) berhasil generate Char Story.")
+            except Exception as e:
+                logger.warning(f"Char Story: Deepseek gagal: {e}")
+                await asyncio.sleep(1)
+
+        # Coba OpenAI jika semua gagal
+        if not story_text and self.openai_key_cycler:
+            try:
+                key = next(self.openai_key_cycler)
+                client = AsyncOpenAI(api_key=key, timeout=30.0)
+                logger.info(f"Char Story: Mencoba OpenAI...")
+                response = await client.chat.completions.create(
+                    model="gpt-4o-mini",
+                    messages=[{"role": "user", "content": prompt}],
+                    temperature=0.75,
+                    max_tokens=1200,
+                )
+                story_text = response.choices[0].message.content
+                if story_text:
+                    ai_used = "OpenAI"
+                    logger.info("AI (OpenAI) berhasil generate Char Story.")
+            except Exception as e:
+                logger.error(f"Char Story: OpenAI GAGAL (fallback terakhir): {e}")
+                # Jangan return None di sini, biarkan fungsi selesai dan return story_text (yang None)
+        # --- [AKHIR PERBAIKAN] ---
+
+        if story_text:
+            cleaned_story = story_text.strip().replace("```", "")
+            return cleaned_story
+        else:
+            logger.error(f"Semua AI gagal generate Char Story untuk {nama_char}.")
+            return None # Return None jika semua AI gagal
 
     @commands.command(name="setupcs")
     async def setup_cs_panel(self, ctx):
@@ -522,7 +570,6 @@ class CharacterStoryCog(commands.Cog, name="CharacterStory"):
         await ctx.send(embed=embed, view=CSPanelView(self.bot))
 
 async def setup(bot):
-    # Pastikan atribut 'persistent_views_added' ada di bot
     if not hasattr(bot, 'persistent_views_added'):
         bot.persistent_views_added = False
     await bot.add_cog(CharacterStoryCog(bot))
