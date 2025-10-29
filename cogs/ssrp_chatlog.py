@@ -294,11 +294,10 @@ class SSRPChatlogCog(commands.Cog, name="SSRPChatlog"):
         else:
             logger.warning("⚠️ AgentRouter API key (AGENTROUTER_API_KEY) tidak ditemukan di config.")
 
-        # ===== STYLING SETTINGS (DIPERBAIKI BERDASARKAN MASUKAN PENGGUNA) =====
-        self.FONT_SIZE = 14  # Dinaikkan dari 13 untuk ketajaman
-        self.LINE_HEIGHT_ADD = 5  # Sedikit ditambah (dari 4)
-        # Prioritaskan Arial Bold
-        self.FONT_PATH = self._find_font(["arialbd.ttf", "arial.ttf", "Arial.ttf", "LiberationSans-Bold.ttf", "DejaVuSans-Bold.ttf"])
+        # ===== STYLING SETTINGS (DIPERBAIKI) =====
+        self.FONT_SIZE = 13  # Dinaikkan dari 12 untuk ketajaman
+        self.LINE_HEIGHT_ADD = 4  # Sedikit ditambah
+        self.FONT_PATH = self._find_font(["arial.ttf", "Arial.ttf", "arialbd.ttf", "LiberationSans-Regular.ttf", "DejaVuSans.ttf"])
 
         # Warna teks (DIPERBAIKI: /do sama dengan /me)
         self.COLOR_CHAT = (255, 255, 255)
@@ -314,12 +313,12 @@ class SSRPChatlogCog(commands.Cog, name="SSRPChatlog"):
         self.COLOR_MONEY = (0, 128, 0)
         self.COLOR_OOC = (170, 170, 170)
 
-        # Text shadow settings (DIPERBAIKI: shadow lebih tegas dan hitam)
-        self.COLOR_SHADOW = (0, 0, 0, 255)  # Shadow hitam pekat (dari 200)
+        # Text shadow settings (DIPERBAIKI: shadow lebih tegas)
+        self.COLOR_SHADOW = (0, 0, 0, 255)  # Shadow lebih gelap
         self.SHADOW_OFFSETS = [(-1, -1), (1, -1), (-1, 1), (1, 1), (0, -1), (-1, 0), (1, 0), (0, 1)]  # 8 arah
 
-        # Background overlay (DIPERBAIKI: hitam pekat)
-        self.BG_COLOR = (0, 0, 0, 255) # Diubah dari 180 (semi-transparan)
+        # Background overlay
+        self.BG_COLOR = (0, 0, 0, 180)
 
         # Muat font dengan antialiasing
         try:
@@ -328,8 +327,8 @@ class SSRPChatlogCog(commands.Cog, name="SSRPChatlog"):
         except IOError:
             logger.warning(f"Font SSRP ({self.FONT_PATH}) tidak ditemukan, pakai default.")
             try:
-                self.font = ImageFont.truetype("DejaVuSans-Bold.ttf", self.FONT_SIZE)
-                logger.info("✅ Fallback ke DejaVuSans-Bold.")
+                self.font = ImageFont.truetype("DejaVuSans.ttf", self.FONT_SIZE)
+                logger.info("✅ Fallback ke DejaVuSans.")
             except IOError:
                 self.font = ImageFont.load_default()
                 logger.warning("⚠️ Gagal load DejaVuSans, pakai font default Pillow.")
@@ -462,9 +461,9 @@ class SSRPChatlogCog(commands.Cog, name="SSRPChatlog"):
                 await interaction.response.send_message("❌ Hanya peminta asli yang bisa mengisi!", ephemeral=True)
                 return
             await interaction.response.send_modal(modal)
-            # button.disabled = True # Tidak perlu
+            button.disabled = True
             try:
-                await interaction.message.delete() # DIPERBARUI: Hapus pesan awal
+                await interaction.message.delete()
             except discord.NotFound:
                 pass
 
@@ -521,7 +520,7 @@ class SSRPChatlogCog(commands.Cog, name="SSRPChatlog"):
                 limited_dialogs = raw_dialogs[:dialog_counts[idx]]
 
                 await processing_msg.edit(
-                    content=f"🎨 {interaction.user.mention}, memproses gambar {idx + 1}/{len(images_bytes_list)} ({len(limited_dialogs)} baris, bg: {bg_style}, AI: {ai_used})..."
+                    content=f"🎨 {interaction.user.mention}, memproses gambar {idx + 1}/{len(images_bytes_list)} ({len(limited_dialogs)} baris, bg: {bg_style})..."
                 )
 
                 processed_img = await self.add_dialogs_to_image(
@@ -533,7 +532,6 @@ class SSRPChatlogCog(commands.Cog, name="SSRPChatlog"):
                 processed_images_bytes.append(processed_img)
                 await asyncio.sleep(0.2)
 
-            # DIPERBARUI: Hapus (AI: {ai_used})
             final_content = f"✅ Selesai! Hasil SSRP untuk {interaction.user.mention}:"
             if warnings:
                 warning_text = "\n".join(f"- {w}" for w in warnings)
@@ -558,8 +556,7 @@ class SSRPChatlogCog(commands.Cog, name="SSRPChatlog"):
                     value=skenario[:1000] + "..." if len(skenario) > 1000 else skenario,
                     inline=False
                 )
-                # DIPERBARUI: Hapus (AI ({ai_used}))
-                embed_result.set_footer(text=f"Dialog dalam: {language}")
+                embed_result.set_footer(text=f"Dialog Meggunakan Bahasa: {language}")
 
                 await interaction.channel.send(embed=embed_result, files=files)
 
@@ -759,7 +756,7 @@ class SSRPChatlogCog(commands.Cog, name="SSRPChatlog"):
         user_mention: str
     ) -> Tuple[List[List[str]], str]:
         """Generate dialog SSRP SAMP dengan fallback AI - HANYA TEKS - PROMPT DIPERBAIKI"""
-
+        
         dialog_requirements = "\n".join([f"Gambar {i+1}: HARUS berisi TEPAT {count} baris dialog." for i, count in enumerate(dialog_counts)])
         char_details = info_data.get('detail_karakter', '')
         char_names_raw = re.findall(r"([A-Za-z']+(?:\s+[A-Za-z']+)*)", char_details)
@@ -805,11 +802,11 @@ ATURAN FORMAT KETAT ({language}):
    - Contoh: `*John Doe mengangguk pelan sambil tersenyum`
 
 4. **/DO (DESKRIPSI)** - Format: `*Deskripsi kejadian (( Nama Karakter ))`
-   - Dua bintang (*)
+   - Hanya Satu bintang (*)
    - Nama di AKHIR dalam tanda kurung (( ))
    - TANPA underscore di nama
    - Maksimal 50 kata
-   - Contoh: `**Angin sepoi-sepoi menerpa wajahnya dengan lembut (( Jane Smith ))`
+   - Contoh: `*Angin sepoi-sepoi menerpa wajahnya dengan lembut (( Jane Smith ))`
 
 5. **WHISPER/PHONE** - JANGAN GUNAKAN format `whispers:` atau `(phone):` KECUALI jika Skenario secara eksplisit memintanya (e.g., "skenario: berbisik di telepon"). Jika tidak, fokus pada format 1-4.
 
@@ -1016,11 +1013,11 @@ PENTING:
         text_lower = text.strip().lower()
 
         # /do (DUA bintang, nama di akhir)
-        if text.startswith('*') and '(( ' in text and ' ))' in text:
+        if text.startswith('**') and '(( ' in text and ' ))' in text:
             return self.COLOR_DO  # Warna SAMA dengan /me
 
         # /me (SATU bintang, nama di awal)
-        if text.startswith('*') and not text.startswith('**'): # DIPERBAIKI: Hapus spasi
+        if text.startswith('* ') and not text.startswith('** '):
             return self.COLOR_ME
         
         # Whisper
@@ -1074,20 +1071,19 @@ PENTING:
             if not rest_of_line.startswith(' '):
                  cleaned_text = f"{name} whispers: {rest_of_line.lstrip()}"
 
-        # /me format: "*Nama_Karakter aksi" -> "*Nama Karakter aksi"
-        elif text.startswith('*') and not text.startswith('**'): # DIPERBAIKI: Hapus spasi
-            line_content = text[1:] # Hapus bintang
-            parts = line_content.split(' ', 1) # Pisahkan nama dan aksi
-            if len(parts) == 2:
-                name = parts[0].replace('_', ' ')
-                action = parts[1]
-                cleaned_text = f"*{name} {action}" # Tambahkan bintang kembali
-            elif len(parts) == 1:
-                 name = parts[0].replace('_', ' ')
-                 cleaned_text = f"*{name}" # Hanya nama
+        # /me format: "* Nama_Karakter aksi" -> "* Nama Karakter aksi"
+        elif text.startswith('*') and not text.startswith('*'):
+            parts = text.split(' ', 2)
+            if len(parts) >= 3:
+                name = parts[1].replace('_', ' ')
+                action = parts[2]
+                cleaned_text = f"* {name} {action}"
+            elif len(parts) == 2:
+                 name = parts[1].replace('_', ' ')
+                 cleaned_text = f"* {name}"
 
-        # /do format: "**Deskripsi (( Nama_Karakter ))" -> "**Deskripsi (( Nama Karakter ))"
-        elif text.startswith('*'): # DIPERBAIKI: Hapus spasi
+        # /do format: "** Deskripsi (( Nama_Karakter ))" -> "** Deskripsi (( Nama Karakter ))"
+        elif text.startswith('*'):
             # Cari dan replace underscore dalam (( Nama_Karakter ))
             cleaned_text = re.sub(
                 r'\(\(\s*([A-Za-z0-9_]+(?:\s+[A-Za-z0-9_]+)*)\s*\)\)',
