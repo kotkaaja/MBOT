@@ -775,47 +775,23 @@ class TemplateCreatorCog(commands.Cog, name="TemplateCreator"):
                 logger.info(f"Sesi !buatrp for {ctx.author.id} dibersihkan.")
 
 
-    @commands.command(name="rphelp")
-    async def template_help_command(self, ctx):
-        """Bantuan untuk fitur Template Creator"""
-        embed = discord.Embed(
-            title="📚 KotkaHelper Template Creator - Bantuan",
-            description="Fitur membuat template Auto RP (PC/Mobile) via AI.",
-            color=0x3498db
-        )
-        embed.add_field(
-            name="🎯 Cara Pakai",
-            value=("1. Ketik `!buatrp`\n2. Pilih tipe macro\n3. Ikuti alur & isi form (termasuk Bahasa/Aksen)\n4. AI generate template"), inline=False
-        )
-        embed.add_field(
-            name="🌐 Bahasa & Aksen",
-            value=("Anda bisa input bahasa & aksen di form (opsional). Contoh: `English`, `Spanish (Mexico)`, `Russian accent`."), inline=False
-        )
-        embed.add_field(
-            name="📝 Aturan AI (SAMP)",
-            value=("✅ /me=Aksi, /do=Hasil/Tanya\n✅ 3-7 langkah, delay 2-4s\n✅ Konteks SAMP (SOS, Deagle, dll)\n❌ No Force RP, Undetailed, /do bohong"), inline=False
-        )
-        embed.add_field(
-            name="💡 Tips Tema",
-            value=("✅ Spesifik: 'Mancing malam hari'\n✅ Konteks: 'Masuk mobil hujan'\n✅ (Gun Both): Isi tema Keluarkan & Simpan"), inline=False
-        )
-        embed.add_field(
-            name="⌨️ Tipe Macro",
-            value=("**Auto RP:** Hotkey\n**CMD Macro:** Command chat\n**Gun RP:** Otomatis ganti senjata"), inline=False
-        )
-        embed.add_field(
-            name="📂 Format Output",
-            value=("**`.txt` (KHP Format):** Kompatibel PC & Android."), inline=False
-        )
-        embed.set_footer(text="Dibuat oleh Kotkaaja • AI mengikuti aturan SAMP RP")
-        await ctx.send(embed=embed)
+    # ========== BLOK KODE PERINTAH RPHELP DIHAPUS ==========
+    # @commands.command(name="rphelp")
+    # async def template_help_command(self, ctx):
+    #     """Bantuan untuk fitur Template Creator"""
+    #     embed = discord.Embed(...)
+    #     ... # Isi embed bantuan dihapus
+    #     await ctx.send(embed=embed)
+    # =====================================================
 
     @commands.Cog.listener()
     async def on_command_error(self, ctx, error):
         """Error handler untuk Template Creator"""
         if ctx.cog is not self: return
 
-        if ctx.command and ctx.command.name in ['buatrp', 'rphelp']:
+        # ========== MODIFIKASI: Hapus referensi ke 'rphelp' ==========
+        if ctx.command and ctx.command.name in ['buatrp']: # Hanya cek 'buatrp'
+        # =============================================================
             if isinstance(error, commands.CommandNotFound): return
 
             if ctx.author.id in self.active_sessions:
