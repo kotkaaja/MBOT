@@ -2,6 +2,7 @@ import os
 import psycopg2
 import logging
 from datetime import date, datetime # Tambahkan datetime
+from typing import Tuple # <--- TAMBAHKAN IMPORT INI
 
 logger = logging.getLogger(__name__)
 
@@ -17,7 +18,7 @@ RANK_LIMITS = {
     "low vip": 10,
     "middle vip": 20,
     "upper vip": 30,
-    "admin": -1 
+    "admin": -1
 }
 VALID_RANKS = list(RANK_LIMITS.keys())
 
@@ -44,27 +45,27 @@ def init_database():
     if not conn:
         logger.error("Tidak bisa inisialisasi database karena koneksi gagal.")
         return
-        
+
     try:
         # Menggunakan 'with' memastikan cursor tertutup secara otomatis
         with conn.cursor() as cursor:
             # Tabel untuk fitur Scanner
             cursor.execute('''
                 CREATE TABLE IF NOT EXISTS scan_history (
-                    id SERIAL PRIMARY KEY, 
-                    user_id BIGINT NOT NULL, 
+                    id SERIAL PRIMARY KEY,
+                    user_id BIGINT NOT NULL,
                     filename TEXT NOT NULL,
-                    file_hash TEXT, 
-                    danger_level INTEGER NOT NULL, 
+                    file_hash TEXT,
+                    danger_level INTEGER NOT NULL,
                     analyst TEXT,
-                    timestamp TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP, 
+                    timestamp TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
                     channel_id BIGINT
                 );
             ''')
             cursor.execute('''
                 CREATE TABLE IF NOT EXISTS daily_usage (
-                    user_id BIGINT NOT NULL, 
-                    date DATE NOT NULL, 
+                    user_id BIGINT NOT NULL,
+                    date DATE NOT NULL,
                     count INTEGER DEFAULT 0,
                     PRIMARY KEY (user_id, date)
                 );
@@ -72,7 +73,7 @@ def init_database():
             # Tabel untuk fitur Character Story
             cursor.execute('''
                 CREATE TABLE IF NOT EXISTS char_story_cooldown (
-                    user_id BIGINT PRIMARY KEY, 
+                    user_id BIGINT PRIMARY KEY,
                     last_used_date DATE NOT NULL
                 );
             ''')
@@ -83,7 +84,7 @@ def init_database():
                     upload_channel_id BIGINT
                 );
             ''')
-            
+
             # =================================================================
             # [BARU] Tabel untuk Pangkat (Rank) dan Limit AI
             # =================================================================
@@ -97,8 +98,8 @@ def init_database():
             # Menyimpan jejak penggunaan SEMUA FITUR AI
             cursor.execute('''
                 CREATE TABLE IF NOT EXISTS ai_daily_usage (
-                    user_id BIGINT NOT NULL, 
-                    date DATE NOT NULL, 
+                    user_id BIGINT NOT NULL,
+                    date DATE NOT NULL,
                     count INTEGER DEFAULT 0,
                     PRIMARY KEY (user_id, date)
                 );
@@ -237,27 +238,27 @@ def set_char_story_cooldown(user_id: int):
 def get_user_rank(user_id: int) -> str:
     """Mengambil pangkat (rank) pengguna dari database."""
     conn = get_db_connection()
-    if not conn: 
+    if not conn:
         return 'beginner' # Default jika DB gagal
     try:
         with conn.cursor() as cursor:
             cursor.execute('SELECT rank FROM user_permissions WHERE user_id = %s', (user_id,))
             result = cursor.fetchone()
-        
+
         # Jika pengguna tidak ada di tabel, tambahkan sebagai beginner
         if not result:
             set_user_rank(user_id, 'beginner') # Otomatis daftarkan
             return 'beginner'
-        
+
         rank = result[0].lower()
         # Validasi jika rank di DB tidak valid lagi
         if rank not in VALID_RANKS:
             logger.warning(f"User {user_id} memiliki rank tidak valid '{rank}', direset ke 'beginner'.")
             set_user_rank(user_id, 'beginner')
             return 'beginner'
-            
+
         return rank
-        
+
     except Exception as e:
         logger.error(f"Gagal mengambil rank untuk user {user_id}", exc_info=e)
         return 'beginner'
@@ -270,7 +271,7 @@ def set_user_rank(user_id: int, rank: str) -> bool:
         return False
 
     conn = get_db_connection()
-    if not conn: 
+    if not conn:
         return False
     try:
         with conn.cursor() as cursor:
@@ -295,7 +296,7 @@ def check_ai_limit(user_id: int) -> Tuple[bool, int, int]:
     Mengembalikan (BolehPakai, SisaRequest, BatasMaksimal)
     """
     conn = get_db_connection()
-    if not conn: 
+    if not conn:
         return (False, 0, 0) # Gagalkan jika DB mati
 
     try:
@@ -310,13 +311,13 @@ def check_ai_limit(user_id: int) -> Tuple[bool, int, int]:
         with conn.cursor() as cursor:
             cursor.execute('SELECT count FROM ai_daily_usage WHERE user_id = %s AND date = %s', (user_id, date.today()))
             result = cursor.fetchone()
-        
+
         if result:
             current_usage = result[0]
-        
+
         can_use = current_usage < limit
         remaining = limit - current_usage
-        
+
         return (can_use, remaining, limit)
 
     except Exception as e:
@@ -326,7 +327,7 @@ def check_ai_limit(user_id: int) -> Tuple[bool, int, int]:
 def increment_ai_usage(user_id: int):
     """Menambah hitungan penggunaan AI harian pengguna."""
     conn = get_db_connection()
-    if not conn: 
+    if not conn:
         return
 
     try:
