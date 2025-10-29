@@ -1017,7 +1017,7 @@ PENTING:
             return self.COLOR_DO  # Warna SAMA dengan /me
 
         # /me (SATU bintang, nama di awal)
-        if text.startswith('*') and not text.startswith('*'):
+        if text.startswith('*') and not text.startswith('**'):
             return self.COLOR_ME
         
         # Whisper
@@ -1072,7 +1072,7 @@ PENTING:
                  cleaned_text = f"{name} whispers: {rest_of_line.lstrip()}"
 
         # /me format: "* Nama_Karakter aksi" -> "* Nama Karakter aksi"
-        elif text.startswith('*') and not text.startswith('*'):
+        elif text.startswith('*') and not text.startswith('**'):
             parts = text.split(' ', 2)
             if len(parts) >= 3:
                 name = parts[1].replace('_', ' ')
