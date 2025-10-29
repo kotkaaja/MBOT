@@ -586,7 +586,7 @@ class CharacterStoryCog(commands.Cog, name="CharacterStory"):
         - Nama Karakter: {nama_char}
         - Jenis Kelamin: {jenis_kelamin}
         - Tanggal Lahir: {tanggal_lahir}
-        - Kota Asal: {kota_asal} (Asumsikan ini adalah kota di Amerika)
+        - Kota Asal: {kota_asal} (Ini biasanya kota atau negara asli yang ada dunia)
         - Latar Belakang Kultur/Etnis (jika ada): {culture if culture else 'Amerika umum'}
         - Sisi Cerita: {story_type.replace('_', ' ')}
         - Bakat/Keahlian Utama: {bakat}
