@@ -12,5 +12,3 @@ psycopg2-binary
 spotdl
 requests
 Pillow
-selenium==4.22.0
-webdriver-manager==4.0.1
