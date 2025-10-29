@@ -611,7 +611,7 @@ class ScannerCog(commands.Cog, name="Scanner"):
         
         target_attachment = attachment
         if not is_command:
-             target_attachment = ctx_or_msg.attachments[0] if ctx_or_msg.attachments else None
+             target_attachment = ctx_or_msg.message.attachments[0] if ctx_or_msg.message.attachments else None
         
         if target_attachment:
             if target_attachment.size > self.config.MAX_FILE_SIZE_MB * 1024 * 1024: raise Exception(f"File >{self.config.MAX_FILE_SIZE_MB}MB")
