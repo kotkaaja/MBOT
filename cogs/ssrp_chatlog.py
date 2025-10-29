@@ -1013,11 +1013,11 @@ PENTING:
         text_lower = text.strip().lower()
 
         # /do (DUA bintang, nama di akhir)
-        if text.startswith('**') and '(( ' in text and ' ))' in text:
+        if text.startswith('*') and '(( ' in text and ' ))' in text:
             return self.COLOR_DO  # Warna SAMA dengan /me
 
         # /me (SATU bintang, nama di awal)
-        if text.startswith('* ') and not text.startswith('** '):
+        if text.startswith('*') and not text.startswith('*'):
             return self.COLOR_ME
         
         # Whisper
