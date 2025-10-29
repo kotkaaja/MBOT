@@ -7,7 +7,7 @@ import re
 import json
 import asyncio
 import aiohttp
-from typing import List, Tuple, Dict, Set
+from typing import List, Tuple, Dict, Set, Union # Tambahkan Union
 import py7zr
 import rarfile
 from openai import AsyncOpenAI
@@ -39,7 +39,7 @@ class DangerLevel:
     VERY_SUSPICIOUS = 3
     DANGEROUS = 4
 
-# Pola-pola berbahaya dengan level dan deskripsi - VERSI LENGKAP DARI BOTSCANNER
+# Pola-pola berbahaya (tetap sama)
 SUSPICIOUS_PATTERNS = {
     # Level DANGEROUS - Sangat berbahaya
     "discord.com/api/webhooks": {"level": DangerLevel.DANGEROUS, "description": "Discord webhook - sangat mungkin untuk mencuri data pengguna"},
@@ -216,6 +216,29 @@ class ScannerCog(commands.Cog, name="Scanner"):
         self.gemini_key_cycler = itertools.cycle(self.config.GEMINI_API_KEYS) if self.config.GEMINI_API_KEYS else None
         self.openai_key_cycler = itertools.cycle(self.config.OPENAI_API_KEYS) if self.config.OPENAI_API_KEYS else None
 
+        # --- [PERUBAHAN 1: Multiple Keys] ---
+        # Memuat OpenRouter dan AgentRouter keys sebagai list
+        self.openrouter_keys = [k.strip() for k in os.getenv("OPENROUTER_API_KEY", "").split(',') if k.strip()]
+        self.agentrouter_keys = [k.strip() for k in os.getenv("AGENTROUTER_API_KEY", "").split(',') if k.strip()]
+
+        self.openrouter_key_cycler = itertools.cycle(self.openrouter_keys) if self.openrouter_keys else None
+        self.agentrouter_key_cycler = itertools.cycle(self.agentrouter_keys) if self.agentrouter_keys else None
+
+        if self.openrouter_keys:
+            self.openrouter_headers = {
+                "HTTP-Referer": getattr(self.config, 'OPENROUTER_SITE_URL', 'http://localhost'),
+                "X-Title": getattr(self.config, 'OPENROUTER_SITE_NAME', 'MBOT'),
+            }
+            logger.info(f"✅ OpenRouter keys ({len(self.openrouter_keys)}) dimuat untuk Scanner.")
+        else:
+            logger.warning("⚠️ OpenRouter API keys (OPENROUTER_API_KEY) tidak ditemukan di config.")
+            
+        if self.agentrouter_keys:
+            logger.info(f"✅ AgentRouter keys ({len(self.agentrouter_keys)}) dimuat untuk Scanner.")
+        else:
+            logger.warning("⚠️ AgentRouter API keys (AGENTROUTER_API_KEY) tidak ditemukan di config.")
+        # --- [AKHIR PERUBAHAN 1] ---
+
         self.cleanup_task.start()
         logger.info("✅ Scanner Cog loaded, cleanup task started.")
     
@@ -294,6 +317,51 @@ class ScannerCog(commands.Cog, name="Scanner"):
     # ============================
     # FUNGSI ANALISIS AI
     # ============================
+
+    # Fungsi analisis OpenRouter dan AgentRouter (tetap sama)
+    async def _analyze_with_openrouter(self, code_snippet: str, api_key: str) -> Dict:
+        """Menganalisis kode dengan OpenRouter."""
+        async with httpx.AsyncClient(timeout=45.0) as client:
+            payload = {
+                "model": "mistralai/mistral-7b-instruct:free", # Model Teks Gratis
+                "messages": [{"role": "user", "content": AI_PROMPT.format(code_snippet=code_snippet[:3000])}],
+                "response_format": {"type": "json_object"},
+                "temperature": 0.0,
+                "max_tokens": 2048
+            }
+            headers = {"Authorization": f"Bearer {api_key}"}
+            if hasattr(self, 'openrouter_headers'):
+                headers.update(self.openrouter_headers)
+
+            response = await client.post(
+                "https://openrouter.ai/api/v1/chat/completions",
+                json=payload,
+                headers=headers
+            )
+            response.raise_for_status()
+            response_json = response.json()
+            response_content = response_json["choices"][0]["message"]["content"]
+            cleaned_response = re.sub(r'```json\s*|\s*```', '', response_content.strip(), flags=re.DOTALL)
+            return json.loads(cleaned_response)
+
+    async def _analyze_with_agentrouter(self, code_snippet: str, api_key: str) -> Dict:
+        """Menganalisis kode dengan AgentRouter."""
+        client = AsyncOpenAI(
+            api_key=api_key,
+            base_url="https://agentrouter.org/v1",
+            timeout=45.0
+        )
+        response = await client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[{"role": "user", "content": AI_PROMPT.format(code_snippet=code_snippet[:3000])}],
+            response_format={"type": "json_object"}, 
+            temperature=0.0
+        )
+        response_content = response.choices[0].message.content
+        cleaned_response = re.sub(r'```json\s*|\s*```', '', response_content.strip(), flags=re.DOTALL)
+        return json.loads(cleaned_response)
+
+    # Fungsi analisis DeepSeek, OpenAI, Gemini (tetap sama)
     async def _analyze_with_deepseek(self, code_snippet: str, api_key: str) -> Dict:
         async with httpx.AsyncClient(timeout=15.0) as client:
             response = await client.post(
@@ -305,7 +373,7 @@ class ScannerCog(commands.Cog, name="Scanner"):
             return json.loads(response.json()["choices"][0]["message"]["content"])
 
     async def _analyze_with_openai(self, code_snippet: str, api_key: str) -> Dict:
-        client = AsyncOpenAI(apij_key=apij_key)
+        client = AsyncOpenAI(api_key=api_key)
         response = await client.chat.completions.create(
             model="gpt-4o-mini",
             messages=[{"role": "user", "content": AI_PROMPT.format(code_snippet=code_snippet[:3000])}],
@@ -316,7 +384,13 @@ class ScannerCog(commands.Cog, name="Scanner"):
     async def _analyze_with_gemini(self, code_snippet: str, api_key: str) -> Dict:
         genai.configure(api_key=api_key)
         model = genai.GenerativeModel('gemini-1.5-flash')
-        response = await model.generate_content_async(AI_PROMPT.format(code_snippet=code_snippet[:3000]))
+        response = await model.generate_content_async(
+            AI_PROMPT.format(code_snippet=code_snippet[:3000]),
+             generation_config=genai.types.GenerationConfig(
+                response_mime_type="application/json",
+                temperature=0.0
+             )
+        )
         cleaned_response = re.sub(r'```json\s*|\s*```', '', response.text.strip(), flags=re.DOTALL)
         return json.loads(cleaned_response)
 
@@ -325,57 +399,94 @@ class ScannerCog(commands.Cog, name="Scanner"):
         summary = f"Ditemukan {len(detected_issues)} pola mencurigakan. Pola paling berbahaya memiliki level {max(i['level'] for i in detected_issues)}."
         return {"script_purpose": "Analisis manual berbasis pola", "analysis_summary": summary, "confidence_score": 75}
 
-    async def _get_ai_analysis_with_voting(self, code_snippet: str, detected_issues: List[Dict], choice: str, ctx) -> Tuple[Dict, str, List[Dict]]:
+
+    # --- [PERUBAHAN 3: Fallback & Ephemeral Error] ---
+    async def _get_ai_analysis_with_fallback(
+        self,
+        code_snippet: str,
+        detected_issues: List[Dict],
+        choice: str,
+        loading_msg: discord.Message,
+        ctx_or_msg: Union[commands.Context, discord.Message] # Tambahkan parameter ini
+    ) -> Tuple[Dict, str, List[Dict]]:
+        """Mendapatkan analisis AI menggunakan fallback chain, atau hanya manual."""
+        
+        # Jika 'manual', langsung gunakan manual
         if choice == 'manual':
             manual_result = self._analyze_manually(detected_issues)
+            manual_result['ai_type'] = "Manual"
             return manual_result, "Manual", [manual_result]
         
-        ai_results = []
-        max_detected_level = max([issue['level'] for issue in detected_issues], default=0)
-        use_multiple_ais = max_detected_level >= DangerLevel.DANGEROUS
-        
+        # Tentukan urutan AI berdasarkan 'choice'
         analysts_to_try = []
-        if choice in ['auto', 'deepseek'] and self.deepseek_key_cycler: analysts_to_try.append(("DeepSeek", self.deepseek_key_cycler, self._analyze_with_deepseek))
-        if choice in ['auto', 'gemini'] and self.gemini_key_cycler: analysts_to_try.append(("Gemini", self.gemini_key_cycler, self._analyze_with_gemini))
-        if choice in ['auto', 'openai'] and self.openai_key_cycler: analysts_to_try.append(("OpenAI", self.openai_key_cycler, self._analyze_with_openai))
+        is_command = isinstance(ctx_or_msg, commands.Context) # Cek apakah ini dari command
 
-        if use_multiple_ais:
-            await ctx.send("🚨 **Pola berbahaya terdeteksi!** Menggunakan multiple AI untuk validasi...")
-            tasks = [asyncio.create_task(analyzer(code_snippet, next(keys))) for _, keys, analyzer in analysts_to_try]
-            for i, task in enumerate(asyncio.as_completed(tasks)):
-                try:
-                    result = await task
-                    result['ai_type'] = analysts_to_try[i][0]
-                    ai_results.append(result)
-                except Exception as e:
-                    logger.warning(f"Multi-AI analysis failed for {analysts_to_try[i][0]}: {e}")
-        else:
-            for name, keys, analyzer in analysts_to_try:
-                try:
-                    result = await analyzer(code_snippet, next(keys))
-                    result['ai_type'] = name
-                    ai_results.append(result)
-                    break 
-                except Exception as e:
-                    logger.warning(f"{name} analysis failed: {e}")
-                    await ctx.send(f"⚠️ {name} gagal, mencoba analis berikutnya...")
+        if choice == 'auto':
+            if self.openrouter_key_cycler: analysts_to_try.append(("OpenRouter", self.openrouter_key_cycler, self._analyze_with_openrouter))
+            if self.agentrouter_key_cycler: analysts_to_try.append(("AgentRouter", self.agentrouter_key_cycler, self._analyze_with_agentrouter))
+            if self.openai_key_cycler: analysts_to_try.append(("OpenAI", self.openai_key_cycler, self._analyze_with_openai))
+            if self.gemini_key_cycler: analysts_to_try.append(("Gemini", self.gemini_key_cycler, self._analyze_with_gemini))
+            if self.deepseek_key_cycler: analysts_to_try.append(("DeepSeek", self.deepseek_key_cycler, self._analyze_with_deepseek))
+        elif choice == 'openrouter' and self.openrouter_key_cycler: analysts_to_try.append(("OpenRouter", self.openrouter_key_cycler, self._analyze_with_openrouter))
+        elif choice == 'agentrouter' and self.agentrouter_key_cycler: analysts_to_try.append(("AgentRouter", self.agentrouter_key_cycler, self._analyze_with_agentrouter))
+        elif choice == 'openai' and self.openai_key_cycler: analysts_to_try.append(("OpenAI", self.openai_key_cycler, self._analyze_with_openai))
+        elif choice == 'gemini' and self.gemini_key_cycler: analysts_to_try.append(("Gemini", self.gemini_key_cycler, self._analyze_with_gemini))
+        elif choice == 'deepseek' and self.deepseek_key_cycler: analysts_to_try.append(("DeepSeek", self.deepseek_key_cycler, self._analyze_with_deepseek))
+
+        if not analysts_to_try:
+            logger.warning(f"Tidak ada analis AI yang tersedia untuk pilihan '{choice}', menggunakan manual.")
+            manual_result = self._analyze_manually(detected_issues)
+            manual_result['ai_type'] = "Manual"
+            return manual_result, "Manual", [manual_result]
         
-        if len(ai_results) > 1:
-            best_result = max(ai_results, key=lambda x: x.get('confidence_score', 50))
-            best_result['confidence_score'] = int(sum(r.get('confidence_score', 50) for r in ai_results) / len(ai_results))
-            analyst_name = f"Multi-AI ({', '.join([r['ai_type'] for r in ai_results])})"
-            return best_result, analyst_name, ai_results
-        elif ai_results:
-            return ai_results[0], ai_results[0]['ai_type'], ai_results
+        # Loop fallback chain
+        for name, keys, analyzer_func in analysts_to_try:
+            try:
+                # Jaga pesan loading tetap generik
+                await loading_msg.edit(content=f"🧠 Menganalisis dengan {name}...")
+                key = next(keys)
+                result = await analyzer_func(code_snippet, key)
+                result['ai_type'] = name
+                logger.info(f"Analisis AI ({name}) berhasil.")
+                return result, name, [result] # Sukses
+            except Exception as e:
+                logger.warning(f"====== SCANNER: {name} GAGAL: {e} ======")
+                # Kirim notifikasi kegagalan secara EPHEMERAL jika ini dari command
+                if is_command:
+                    try:
+                        # Coba kirim ephemeral, jika gagal (misal interaksi lama), abaikan
+                        await ctx_or_msg.send(f"⚠️ {name} gagal, mencoba fallback berikutnya...", ephemeral=True, delete_after=10)
+                    except Exception as send_error:
+                         logger.warning(f"Gagal mengirim notifikasi fallback ephemeral: {send_error}")
+                         pass # Lanjutkan fallback tanpa notifikasi ephemeral
+                # JANGAN edit loading_msg publik dengan error spesifik
+                await asyncio.sleep(1) # Jeda singkat
 
-        await ctx.send("⚠️ Gagal menghubungi semua layanan AI, menggunakan analisis manual.")
+        # Jika semua AI gagal
+        logger.error("Semua API AI gagal untuk Scanner setelah fallback.")
+        try:
+            await loading_msg.edit(content="⚠️ Semua AI gagal dihubungi. Menggunakan analisis manual...")
+        except discord.NotFound:
+            pass
+        
         manual_result = self._analyze_manually(detected_issues)
+        manual_result['ai_type'] = "Manual"
         return manual_result, "Manual", [manual_result]
+    # --- [AKHIR PERUBAHAN 3] ---
+
 
     # ============================
     # PROSES INTI SCAN
     # ============================
-    async def _scan_file_content(self, file_path: str, file_content: bytes, choice: str, ctx) -> Tuple[List[Dict], Dict, str, List[Dict]]:
+    async def _scan_file_content(
+        self,
+        file_path: str,
+        file_content: bytes,
+        choice: str,
+        loading_msg: discord.Message,
+        ctx_or_msg: Union[commands.Context, discord.Message] # Tambahkan parameter ini
+    ) -> Tuple[List[Dict], Dict, str, List[Dict]]:
+        
         file_hash = self._get_file_hash(file_content)
         cache_key = f"{file_hash}_{choice}"
         
@@ -395,28 +506,47 @@ class ScannerCog(commands.Cog, name="Scanner"):
             except re.error as e:
                 logger.error(f"Regex error pada pattern '{pattern}': {e}")
 
-        summary, analyst, results = await self._get_ai_analysis_with_voting(content_str, issues, choice, ctx)
+        # --- [PERUBAHAN 5: Pass ctx_or_msg] ---
+        summary, analyst, results = await self._get_ai_analysis_with_fallback(
+            content_str,
+            issues,
+            choice,
+            loading_msg,
+            ctx_or_msg # <-- Diteruskan
+        )
+        # --- [AKHIR PERUBAHAN 5] ---
+        
         detected_max_level = max([i['level'] for i in issues], default=DangerLevel.SAFE)
         summary['danger_level'] = detected_max_level
 
         self.file_cache[cache_key] = {'issues': issues, 'summary': summary, 'analyst': analyst, 'results': results, 'timestamp': time.time()}
         return issues, summary, analyst, results
 
-    async def _process_analysis(self, ctx, attachment: discord.Attachment = None, choice: str = "auto", url: str = None):
-        if not self._check_limits(ctx, "scan"): return
+    async def _process_analysis(self, ctx_or_msg, attachment: discord.Attachment = None, choice: str = "auto", url: str = None):
         
-        await self.processing_queue.put(ctx.author.id)
+        is_command = isinstance(ctx_or_msg, commands.Context)
+        author_id = ctx_or_msg.author.id
+        channel = ctx_or_msg.channel
+        
+        if not self._check_limits(author_id, channel.id, "scan", is_command): 
+            return
+        
+        await self.processing_queue.put(author_id)
         loading_msg = None
         download_path = None
-        extract_folder = os.path.join(self.config.TEMP_DIR, f"extracted_{ctx.message.id}")
+        
+        msg_id = ctx_or_msg.id if not is_command else ctx_or_msg.message.id
+        extract_folder = os.path.join(self.config.TEMP_DIR, f"extracted_{msg_id}")
 
         try:
-            file_content, filename = await self._get_file_source(ctx, attachment, url)
+            file_content, filename = await self._get_file_source(ctx_or_msg, attachment, url, is_command)
             if not filename: return
 
-            loading_msg = await ctx.send(f"⚙️ Menganalisis `{filename}`...")
-            increment_daily_usage(ctx.author.id)
-            self.scan_stats["total_scans"] += 1
+            loading_msg = await channel.send(f"⚙️ Menganalisis `{filename}`...")
+            
+            if is_command:
+                increment_daily_usage(author_id)
+                self.scan_stats["total_scans"] += 1
             
             download_path = os.path.join(self.config.TEMP_DIR, filename)
             with open(download_path, 'wb') as f: f.write(file_content)
@@ -428,57 +558,66 @@ class ScannerCog(commands.Cog, name="Scanner"):
             for i, (file_path, display_name) in enumerate(scan_paths):
                 if total_files > 1: await loading_msg.edit(content=f"🔍 Scanning {self._create_progress_bar(i, total_files)} `{display_name}`")
                 with open(file_path, 'rb') as f_content:
-                    issues, summary, analyst, results = await self._scan_file_content(file_path, f_content.read(), choice, ctx)
+                    # --- [PERUBAHAN 6: Pass ctx_or_msg] ---
+                    issues, summary, analyst, results = await self._scan_file_content(
+                        file_path,
+                        f_content.read(),
+                        choice,
+                        loading_msg,
+                        ctx_or_msg # <-- Diteruskan
+                    )
+                    # --- [AKHIR PERUBAHAN 6] ---
                 
                 scanned_files.append(display_name); analysts.add(analyst)
                 if issues: all_issues.extend([(display_name, issue) for issue in issues])
                 if summary: all_summaries.append(summary); all_results.extend(results)
 
-            await self._finalize_and_send_report(ctx, loading_msg, filename, all_summaries, all_issues, scanned_files, analysts, all_results, download_path)
+            await self._finalize_and_send_report(ctx_or_msg, loading_msg, filename, all_summaries, all_issues, scanned_files, analysts, all_results, download_path, is_command)
         
         except Exception as e:
             logger.error(f"Gagal proses analisis: {e}", exc_info=True)
             error_msg = f"❌ Error: {str(e)[:500]}"
             if loading_msg: await loading_msg.edit(content=error_msg, embed=None, view=None)
-            else: await ctx.send(error_msg)
+            else: await channel.send(error_msg)
         finally:
             if not self.processing_queue.empty(): self.processing_queue.get_nowait()
             if download_path and os.path.exists(download_path): os.remove(download_path)
             if os.path.exists(extract_folder): shutil.rmtree(extract_folder)
 
-    def _check_limits(self, ctx, command_name: str) -> bool:
-        can_proceed, cooldown = check_user_cooldown(ctx.author.id, command_name, self.config.COMMAND_COOLDOWN_SECONDS)
+    def _check_limits(self, author_id: int, channel_id: int, command_name: str, is_command: bool) -> bool:
+        can_proceed, cooldown = check_user_cooldown(author_id, command_name, self.config.COMMAND_COOLDOWN_SECONDS)
         if not can_proceed:
-            # Hanya kirim pesan jika ini adalah perintah, bukan auto-scan
-            if ctx.message.content.startswith(self.bot.command_prefix):
-                asyncio.create_task(ctx.send(f"⏳ Cooldown, tunggu {cooldown} detik lagi."))
+            if is_command:
+                asyncio.create_task(self.bot.get_channel(channel_id).send(f"⏳ Cooldown, tunggu {cooldown} detik lagi."))
             return False
         
-        # --- PERBAIKAN DI SINI ---
-        # Menghapus 'await' karena check_daily_limit adalah fungsi sinkron
-        if command_name == "scan" and not check_daily_limit(ctx.author.id, self.config.DAILY_LIMIT_PER_USER):
-            # Hanya kirim pesan jika ini adalah perintah, bukan auto-scan
-            if ctx.message.content.startswith(self.bot.command_prefix):
-                 asyncio.create_task(ctx.send(f"❌ Batas harian ({self.config.DAILY_LIMIT_PER_USER}) tercapai."))
+        if is_command and command_name == "scan" and not check_daily_limit(author_id, self.config.DAILY_LIMIT_PER_USER):
+            asyncio.create_task(self.bot.get_channel(channel_id).send(f"❌ Batas harian ({self.config.DAILY_LIMIT_PER_USER}) tercapai."))
             return False
         
-        if self.config.ALLOWED_CHANNEL_IDS and ctx.channel.id not in self.config.ALLOWED_CHANNEL_IDS:
-            if ctx.message.content.startswith(self.bot.command_prefix):
-                asyncio.create_task(ctx.send("❌ Perintah ini tidak diizinkan di channel ini.", delete_after=10))
+        if self.config.ALLOWED_CHANNEL_IDS and channel_id not in self.config.ALLOWED_CHANNEL_IDS:
+            if is_command:
+                asyncio.create_task(self.bot.get_channel(channel_id).send("❌ Perintah ini tidak diizinkan di channel ini.", delete_after=10))
             return False
 
         if self.processing_queue.full():
-            if ctx.message.content.startswith(self.bot.command_prefix):
-                asyncio.create_task(ctx.send("⏳ Server sibuk, coba lagi nanti."))
+            if is_command:
+                asyncio.create_task(self.bot.get_channel(channel_id).send("⏳ Server sibuk, coba lagi nanti."))
             return False
         return True
 
-    async def _get_file_source(self, ctx, attachment, url) -> Tuple[bytes, str]:
+    async def _get_file_source(self, ctx_or_msg, attachment, url, is_command) -> Tuple[bytes, str]:
         if url: return await self._download_from_url(url)
-        if attachment:
-            if attachment.size > self.config.MAX_FILE_SIZE_MB * 1024 * 1024: raise Exception(f"File >{self.config.MAX_FILE_SIZE_MB}MB")
-            if not any(attachment.filename.lower().endswith(ext) for ext in self.config.ALLOWED_EXTENSIONS): raise Exception("Format file tidak didukung")
-            return await attachment.read(), attachment.filename
+        
+        target_attachment = attachment
+        if not is_command:
+             target_attachment = ctx_or_msg.attachments[0] if ctx_or_msg.attachments else None
+        
+        if target_attachment:
+            if target_attachment.size > self.config.MAX_FILE_SIZE_MB * 1024 * 1024: raise Exception(f"File >{self.config.MAX_FILE_SIZE_MB}MB")
+            if not any(target_attachment.filename.lower().endswith(ext) for ext in self.config.ALLOWED_EXTENSIONS): raise Exception("Format file tidak didukung")
+            return await target_attachment.read(), target_attachment.filename
+        
         raise Exception("Tidak ada file atau URL diberikan")
 
     def _prepare_scan_paths(self, download_path: str, filename: str, extract_folder: str) -> List[Tuple[str, str]]:
@@ -494,26 +633,28 @@ class ScannerCog(commands.Cog, name="Scanner"):
             scan_paths.append((download_path, filename))
         return scan_paths[:self.config.MAX_ARCHIVE_FILES]
     
-    async def _finalize_and_send_report(self, ctx, msg, filename, summaries, issues, scanned_files, analysts, results, download_path):
+    async def _finalize_and_send_report(self, ctx_or_msg, msg, filename, summaries, issues, scanned_files, analysts, results, download_path, is_command):
         best_summary = max(summaries, key=lambda x: x.get('danger_level', 0), default={})
         max_level = best_summary.get('danger_level', DangerLevel.SAFE)
         
-        if max_level >= DangerLevel.DANGEROUS: self.scan_stats["dangerous_files"] += 1
-        elif max_level == DangerLevel.SAFE: self.scan_stats["safe_files"] += 1
+        if is_command:
+            if max_level >= DangerLevel.DANGEROUS: self.scan_stats["dangerous_files"] += 1
+            elif max_level == DangerLevel.SAFE: self.scan_stats["safe_files"] += 1
 
         emoji, color = self._get_level_emoji_color(max_level)
         embed = self._create_result_embed(filename, best_summary, max_level, emoji, color, issues, scanned_files, analysts, download_path)
         view = ScanResultView(filename, issues, summaries, analysts, scanned_files, results)
         await msg.edit(content=None, embed=embed, view=view)
         
-        # Hash dari content, bukan dari ringkasan
         with open(download_path, 'rb') as f:
             file_hash = self._get_file_hash(f.read())
-        save_scan_history(ctx.author.id, filename, file_hash, max_level, ", ".join(sorted(analysts)), ctx.channel.id)
+        
+        save_scan_history(ctx_or_msg.author.id, filename, file_hash, max_level, ", ".join(sorted(analysts)), ctx_or_msg.channel.id)
 
-        if max_level >= DangerLevel.DANGEROUS and self.config.ALERT_CHANNEL_ID:
+        if (is_command or max_level >= DangerLevel.DANGEROUS) and self.config.ALERT_CHANNEL_ID:
             alert_channel = self.bot.get_channel(self.config.ALERT_CHANNEL_ID)
-            if alert_channel: await alert_channel.send(f"🚨 **PERINGATAN** oleh {ctx.author.mention} di {ctx.channel.mention}", embed=embed)
+            if alert_channel: 
+                await alert_channel.send(f"🚨 **PERINGATAN** oleh {ctx_or_msg.author.mention} di {ctx_or_msg.channel.mention}", embed=embed)
 
     def _create_result_embed(self, filename, best_summary, max_level, emoji, color, all_issues, scanned_files, analysts, download_path):
         level_titles = {1: "✅ AMAN", 2: "🤔 MENCURIGAKAN", 3: "⚠️ SANGAT MENCURIGAKAN", 4: "🚨 BAHAYA TINGGI"}
@@ -543,8 +684,11 @@ class ScannerCog(commands.Cog, name="Scanner"):
     @commands.command(name="scan")
     async def scan_command(self, ctx, analyst: str = "auto", *, url: str = None):
         """Memindai file atau URL dengan analis pilihan."""
-        valid_analysts = ["auto", "deepseek", "gemini", "openai", "manual"]
-        # Cek jika 'analyst' sebenarnya adalah URL
+        
+        # --- [PERUBAHAN 7: Update valid_analysts] ---
+        valid_analysts = ["auto", "deepseek", "gemini", "openai", "manual", "openrouter", "agentrouter"]
+        # --- [AKHIR PERUBAHAN 7] ---
+
         if urlparse(analyst).scheme in ['http', 'https']:
             url = f"{analyst} {url}" if url else analyst
             analyst = "auto"
@@ -562,15 +706,21 @@ class ScannerCog(commands.Cog, name="Scanner"):
     @commands.command(name="history")
     async def history_command(self, ctx, limit: int = 5):
         """Melihat riwayat scan Anda."""
-        if not self._check_limits(ctx, "history"): return
+        if not self._check_limits(ctx.author.id, ctx.channel.id, "history", is_command=True): return
         limit = min(max(1, limit), 20)
         
         try:
-            conn = sqlite3.connect(DB_FILE)
+            conn = self.bot.get_cog("Scanner").bot.db_connection
+            if not conn or conn.closed != 0:
+                logger.error("Koneksi DB (history) tidak tersedia.")
+                conn = self.bot.get_cog("Scanner").bot.get_db_connection()
+                if not conn:
+                     return await ctx.send("❌ Gagal terhubung ke database riwayat.")
+
             cursor = conn.cursor()
-            cursor.execute("SELECT filename, danger_level, timestamp FROM scan_history WHERE user_id = ? ORDER BY timestamp DESC LIMIT ?", (ctx.author.id, limit))
+            cursor.execute("SELECT filename, danger_level, timestamp FROM scan_history WHERE user_id = %s ORDER BY timestamp DESC LIMIT %s", (ctx.author.id, limit))
             results = cursor.fetchall()
-            conn.close()
+            cursor.close()
         except Exception as e:
             logger.error(f"Gagal mengambil history: {e}")
             return await ctx.send("❌ Gagal mengambil data riwayat dari database.")
@@ -578,27 +728,33 @@ class ScannerCog(commands.Cog, name="Scanner"):
         if not results: return await ctx.send("📋 Tidak ada riwayat scan ditemukan.")
         
         embed = discord.Embed(title=f"📋 Riwayat Scan - {ctx.author.display_name}", color=0x3498db)
-        desc = "".join([f"{self._get_level_emoji_color(level)[0]} `{fn[:30]}` - <t:{int(datetime.fromisoformat(ts).timestamp())}:R>\n" for fn, level, ts in results])
+        desc = "".join([f"{self._get_level_emoji_color(level)[0]} `{fn[:30]}` - <t:{int(ts.timestamp())}:R>\n" for fn, level, ts in results])
         embed.description = desc
         await ctx.send(embed=embed)
 
     @commands.command(name="stats")
     async def stats_command(self, ctx):
         """Melihat statistik bot dan penggunaan Anda."""
-        if not self._check_limits(ctx, "stats"): return
+        if not self._check_limits(ctx.author.id, ctx.channel.id, "stats", is_command=True): return
         
         embed = discord.Embed(title="📊 Statistik Bot Scanner", color=0x3498db)
         
         # User Stats from DB
         try:
-            # Menggunakan database dari utils/database.py yang memakai postgres
-            conn = self.bot.get_cog("Scanner").get_db_connection() # asumsikan ada method get_db_connection
+            conn = self.bot.get_cog("Scanner").bot.db_connection
+            if not conn or conn.closed != 0:
+                logger.error("Koneksi DB (stats) tidak tersedia.")
+                conn = self.bot.get_cog("Scanner").bot.get_db_connection()
+                if not conn:
+                     return await ctx.send("❌ Gagal terhubung ke database statistik.")
+
             cursor = conn.cursor()
             cursor.execute("SELECT count FROM daily_usage WHERE user_id = %s AND date = %s", (ctx.author.id, datetime.now().strftime('%Y-%m-%d')))
             user_daily = cursor.fetchone()
             cursor.execute("SELECT COUNT(*) FROM scan_history WHERE user_id = %s", (ctx.author.id,))
             user_total = cursor.fetchone()
-            # tidak menutup koneksi karena global
+            cursor.close()
+            
             user_daily_count = user_daily[0] if user_daily else 0
             user_total_count = user_total[0] if user_total else 0
         except Exception as e:
@@ -610,13 +766,17 @@ class ScannerCog(commands.Cog, name="Scanner"):
         # Global Stats
         uptime_seconds = time.time() - self.bot.start_time
         uptime = str(timedelta(seconds=int(uptime_seconds)))
-        embed.add_field(name="🌍 Statistik Global", value=f"Total scan: {self.scan_stats['total_scans']}\nFile berbahaya: {self.scan_stats['dangerous_files']}\nUptime: {uptime}", inline=True)
+        embed.add_field(name="🌍 Statistik Global", value=f"Total scan (sejak restart): {self.scan_stats['total_scans']}\nFile berbahaya (sejak restart): {self.scan_stats['dangerous_files']}\nUptime: {uptime}", inline=True)
         
         # API Status
         api_status = ""
-        if self.config.DEEPSEEK_API_KEYS: api_status += f"🌊 DeepSeek: {len(self.config.DEEPSEEK_API_KEYS)} keys\n"
-        if self.config.GEMINI_API_KEYS: api_status += f"🧠 Gemini: {len(self.config.GEMINI_API_KEYS)} keys\n"
+        # --- [PERUBAHAN 8: Tampilkan jumlah keys] ---
+        if self.openrouter_keys: api_status += f"🌀 OpenRouter: {len(self.openrouter_keys)} keys\n"
+        if self.agentrouter_keys: api_status += f"🚀 AgentRouter: {len(self.agentrouter_keys)} keys\n"
+        # --- [AKHIR PERUBAHAN 8] ---
         if self.config.OPENAI_API_KEYS: api_status += f"🤖 OpenAI: {len(self.config.OPENAI_API_KEYS)} keys\n"
+        if self.config.GEMINI_API_KEYS: api_status += f"🧠 Gemini: {len(self.config.GEMINI_API_KEYS)} keys\n"
+        if self.config.DEEPSEEK_API_KEYS: api_status += f"🌊 DeepSeek: {len(self.config.DEEPSEEK_API_KEYS)} keys\n"
         embed.add_field(name="🔑 API Status", value=api_status or "Manual only", inline=False)
         
         await ctx.send(embed=embed)
@@ -644,7 +804,6 @@ class ScannerCog(commands.Cog, name="Scanner"):
         for item in os.listdir(self.config.TEMP_DIR):
             item_path = os.path.join(self.config.TEMP_DIR, item)
             try:
-                # Hapus file/folder lebih dari 1 jam
                 if os.path.getmtime(item_path) < time.time() - 3600:
                     if os.path.isfile(item_path): os.remove(item_path)
                     elif os.path.isdir(item_path): shutil.rmtree(item_path)
@@ -669,22 +828,46 @@ class ScannerCog(commands.Cog, name="Scanner"):
                 self.author = msg.author
                 self.channel = msg.channel
                 self.bot = bot_instance
+                self.id = msg.id 
             async def send(self, *args, **kwargs): return await self.channel.send(*args, **kwargs)
 
-        await self._process_analysis(FakeContext(message, self.bot), message.attachments[0], 'auto')
+        # --- [PERUBAHAN 9: Auto-scan selalu 'manual'] ---
+        await self._process_analysis(FakeContext(message, self.bot), choice='manual')
+        # --- [AKHIR PERUBAHAN 9] ---
 
     @commands.Cog.listener()
     async def on_command_error(self, ctx, error):
+        if ctx.cog is not self: return
+            
         if isinstance(error, commands.CommandNotFound): return
         if isinstance(error, (commands.MissingPermissions, commands.NotOwner)):
-            await ctx.send("❌ Anda tidak punya izin untuk menggunakan perintah ini.")
+            await ctx.send("❌ Anda tidak punya izin untuk menggunakan perintah ini.", ephemeral=True) # Ephemeral
         elif isinstance(error, commands.CommandInvokeError):
             logger.error(f"Error pada perintah {ctx.command}: {error.original}", exc_info=True)
-            await ctx.send(f"❌ Terjadi kesalahan saat menjalankan perintah: `{error.original}`")
+            await ctx.send(f"❌ Terjadi kesalahan saat menjalankan perintah: `{str(error.original)[:500]}`", ephemeral=True) # Ephemeral
+        elif isinstance(error, commands.CommandOnCooldown):
+             await ctx.send(f"⏳ Cooldown. Coba lagi dalam **{error.retry_after:.1f} detik**.", ephemeral=True, delete_after=10) # Ephemeral
         else:
             logger.error(f"Error tidak dikenal pada perintah {ctx.command}: {error}", exc_info=True)
-            await ctx.send("❌ Terjadi kesalahan internal.")
-
+            await ctx.send("❌ Terjadi kesalahan internal.", ephemeral=True) # Ephemeral
 
 async def setup(bot):
+    if not os.path.exists(bot.config.TEMP_DIR):
+        os.makedirs(bot.config.TEMP_DIR)
+        
+    # --- [PERUBAHAN 10: Koneksi DB] --- (Tidak berubah, hanya memastikan ada)
+    if not hasattr(bot, 'db_connection') or not hasattr(bot, 'get_db_connection'):
+        try:
+            from utils.database import get_db_connection
+            bot.get_db_connection = get_db_connection
+            bot.db_connection = get_db_connection()
+            if bot.db_connection:
+                 logger.info("Koneksi DB berhasil dilampirkan ke bot dari Scanner.")
+            else:
+                 logger.error("Gagal melampirkan koneksi DB ke bot dari Scanner.")
+        except ImportError:
+             logger.error("Gagal impor 'get_db_connection' di scanner setup.")
+    # --- [AKHIR PERUBAHAN 10] ---
+
     await bot.add_cog(ScannerCog(bot))
+
