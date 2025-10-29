@@ -18,7 +18,7 @@ from utils.database import check_ai_limit, increment_ai_usage, get_user_rank
 logger = logging.getLogger(__name__)
 
 # =================================================================================
-# PROMPT ENGINEERING UNTUK OPENAI (Tetap sama)
+# PROMPT ENGINEERING (Tetap sama)
 # =================================================================================
 
 SYSTEM_PROMPT_FULL_SERVER = """
@@ -69,7 +69,7 @@ ATURAN KETAT:
 """
 
 # =================================================================================
-# UI COMPONENTS (Tombol, Tampilan, dll.) - Tetap sama
+# UI COMPONENTS (Tetap sama)
 # =================================================================================
 
 class ChannelToggleButton(ui.Button):
@@ -263,120 +263,177 @@ class CategoryCreationView(ServerCreationView):
 class ServerCreatorCog(commands.Cog, name="ServerCreator"):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
-        self.config = bot.config # Tambahkan config
-        # --- [BARU] Tambahkan key cyclers ---
-        self.openai_client = None # Ganti nama client agar lebih jelas
+        self.config = bot.config
+        # Tambahkan key cyclers untuk SEMUA provider
+        self.openai_client = None
         self.openai_key_cycler = itertools.cycle(self.config.OPENAI_API_KEYS) if self.config.OPENAI_API_KEYS else None
         self.gemini_key_cycler = itertools.cycle(self.config.GEMINI_API_KEYS) if self.config.GEMINI_API_KEYS else None
         self.deepseek_key_cycler = itertools.cycle(self.config.DEEPSEEK_API_KEYS) if self.config.DEEPSEEK_API_KEYS else None
+        self.openrouter_key_cycler = itertools.cycle(self.config.OPENROUTER_API_KEYS) if self.config.OPENROUTER_API_KEYS else None
+        self.agentrouter_key_cycler = itertools.cycle(self.config.AGENTROUTER_API_KEYS) if self.config.AGENTROUTER_API_KEYS else None
 
         if self.openai_key_cycler:
             first_key = self.config.OPENAI_API_KEYS[0]
-            self.openai_client = AsyncOpenAI(api_key=first_key, timeout=30.0) # Set timeout
+            self.openai_client = AsyncOpenAI(api_key=first_key, timeout=30.0)
             logger.info(f"✅ OpenAI client untuk Server Creator berhasil diinisialisasi (menggunakan {len(self.config.OPENAI_API_KEYS)} keys).")
         else:
             logger.warning("⚠️ OPENAI_API_KEYS tidak ada.")
         if not self.gemini_key_cycler: logger.warning("⚠️ GEMINI_API_KEYS tidak ada.")
         if not self.deepseek_key_cycler: logger.warning("⚠️ DEEPSEEK_API_KEYS tidak ada.")
-        # --- [AKHIR PERBAIKAN] ---
+        if not self.openrouter_key_cycler: logger.warning("⚠️ OPENROUTER_API_KEYS tidak ada.")
+        if not self.agentrouter_key_cycler: logger.warning("⚠️ AGENTROUTER_API_KEYS tidak ada.")
 
-    # --- [BARU] Fungsi AI dengan Fallback ---
-    async def _get_ai_proposal(self, system_prompt: str, user_prompt: str) -> Dict[str, Any]:
-        """Menghasilkan proposal dari AI dengan fallback."""
-        proposal_json = None
-        ai_used = "Tidak ada"
+        # Siapkan header OpenRouter
+        if self.openrouter_key_cycler:
+            self.openrouter_headers = {
+                "HTTP-Referer": getattr(self.config, 'OPENROUTER_SITE_URL', 'http://localhost'),
+                "X-Title": getattr(self.config, 'OPENROUTER_SITE_NAME', 'MBOT'),
+            }
 
-        # Coba Gemini
-        if self.gemini_key_cycler:
-            try:
-                key = next(self.gemini_key_cycler)
-                genai.configure(api_key=key)
-                model = genai.GenerativeModel('gemini-1.5-flash')
-                logger.info(f"Server Creator: Mencoba Gemini...")
-                response = await model.generate_content_async(
-                    [system_prompt, user_prompt], # Kirim kedua prompt
-                    generation_config=genai.types.GenerationConfig(
-                        response_mime_type="application/json", temperature=0.7
-                    ),
-                    request_options={"timeout": 60}
+    # --- [BARU] Fungsi AI Helper Terpisah ---
+    async def _try_gemini(self, system_prompt: str, user_prompt: str) -> Optional[Dict[str, Any]]:
+        if not self.gemini_key_cycler: return None
+        try:
+            key = next(self.gemini_key_cycler)
+            genai.configure(api_key=key)
+            model = genai.GenerativeModel('gemini-1.5-flash')
+            logger.info(f"Server Creator: Mencoba Gemini...")
+            response = await model.generate_content_async(
+                [system_prompt, user_prompt],
+                generation_config=genai.types.GenerationConfig(
+                    response_mime_type="application/json", temperature=0.7
+                ),
+                request_options={"timeout": 60}
+            )
+            if response.prompt_feedback.block_reason: raise Exception(f"Diblokir: {response.prompt_feedback.block_reason.name}")
+            if response.candidates and response.candidates[0].finish_reason.name != "STOP": raise Exception(f"Finish reason: {response.candidates[0].finish_reason.name}")
+            cleaned = re.sub(r'```json\s*|\s*```', '', response.text.strip(), flags=re.DOTALL)
+            if not cleaned: raise ValueError("Respons JSON kosong.")
+            data = json.loads(cleaned)
+            logger.info("AI (Gemini) berhasil generate.")
+            return data
+        except Exception as e:
+            logger.warning(f"Server Creator: Gemini gagal: {e}")
+            await asyncio.sleep(1)
+            return None
+
+    async def _try_deepseek(self, system_prompt: str, user_prompt: str) -> Optional[Dict[str, Any]]:
+        if not self.deepseek_key_cycler: return None
+        try:
+            key = next(self.deepseek_key_cycler)
+            async with httpx.AsyncClient(timeout=40.0) as client:
+                logger.info(f"Server Creator: Mencoba Deepseek...")
+                response = await client.post(
+                    "https://api.deepseek.com/chat/completions",
+                    json={
+                        "model": "deepseek-chat",
+                        "messages": [{"role": "system", "content": system_prompt}, {"role": "user", "content": user_prompt}],
+                        "response_format": {"type": "json_object"},
+                        "temperature": 0.7
+                    },
+                    headers={"Authorization": f"Bearer {key}"}
                 )
-                if response.prompt_feedback.block_reason:
-                    raise Exception(f"Gemini diblokir: {response.prompt_feedback.block_reason.name}")
-                if response.candidates and response.candidates[0].finish_reason.name != "STOP":
-                     raise Exception(f"Gemini finish reason: {response.candidates[0].finish_reason.name}")
+                response.raise_for_status()
+                cleaned = re.sub(r'```json\s*|\s*```', '', response.json()["choices"][0]["message"]["content"].strip(), flags=re.DOTALL)
+                if not cleaned: raise ValueError("Respons JSON kosong.")
+                data = json.loads(cleaned)
+                logger.info("AI (DeepSeek) berhasil generate.")
+                return data
+        except Exception as e:
+            logger.warning(f"Server Creator: DeepSeek gagal: {e}")
+            await asyncio.sleep(1)
+            return None
 
-                cleaned = re.sub(r'```json\s*|\s*```', '', response.text.strip(), flags=re.DOTALL)
-                if not cleaned: raise ValueError("Respons JSON dari Gemini kosong.")
-
-                proposal_json = json.loads(cleaned)
-                if proposal_json:
-                     ai_used = "Gemini"
-                     logger.info("AI (Gemini) berhasil generate Proposal.")
-            except Exception as e:
-                logger.warning(f"Server Creator: Gemini gagal: {e}")
-                await asyncio.sleep(1)
-
-        # Coba Deepseek jika Gemini gagal
-        if not proposal_json and self.deepseek_key_cycler:
+    async def _try_openai(self, system_prompt: str, user_prompt: str) -> Optional[Dict[str, Any]]:
+        if not self.openai_key_cycler or not self.openai_client: return None
+        max_retries = len(self.bot.config.OPENAI_API_KEYS)
+        for attempt in range(max_retries):
             try:
-                key = next(self.deepseek_key_cycler)
-                async with httpx.AsyncClient(timeout=40.0) as client:
-                    logger.info(f"Server Creator: Mencoba Deepseek...")
-                    response = await client.post(
-                        "https://api.deepseek.com/chat/completions",
-                        json={
-                            "model": "deepseek-chat",
-                            # Gabungkan prompt untuk Deepseek
-                            "messages": [{"role": "system", "content": system_prompt}, {"role": "user", "content": user_prompt}],
-                            "response_format": {"type": "json_object"},
-                            "temperature": 0.7
-                        },
-                        headers={"Authorization": f"Bearer {key}"}
-                    )
-                    response.raise_for_status()
-                    cleaned = re.sub(r'```json\s*|\s*```', '', response.json()["choices"][0]["message"]["content"].strip(), flags=re.DOTALL)
-                    if not cleaned: raise ValueError("Respons JSON dari Deepseek kosong.")
-                    proposal_json = json.loads(cleaned)
-                    if proposal_json:
-                        ai_used = "Deepseek"
-                        logger.info("AI (Deepseek) berhasil generate Proposal.")
+                key = next(self.openai_key_cycler)
+                self.openai_client.api_key = key
+                logger.info(f"Server Creator: Mencoba OpenAI Key #{attempt+1}...")
+                response = await self.openai_client.chat.completions.create(
+                    model="gpt-4o-mini",
+                    messages=[{"role": "system", "content": system_prompt}, {"role": "user", "content": user_prompt}],
+                    response_format={"type": "json_object"}, temperature=0.7)
+                cleaned = re.sub(r'```json\s*|\s*```', '', response.choices[0].message.content.strip(), flags=re.DOTALL)
+                if not cleaned: raise ValueError("Respons JSON kosong.")
+                data = json.loads(cleaned)
+                logger.info("AI (OpenAI) berhasil generate.")
+                return data
             except Exception as e:
-                logger.warning(f"Server Creator: Deepseek gagal: {e}")
-                await asyncio.sleep(1)
-
-        # Coba OpenAI jika semua gagal
-        if not proposal_json and self.openai_key_cycler and self.openai_client:
-            max_retries = len(self.bot.config.OPENAI_API_KEYS)
-            for attempt in range(max_retries):
-                try:
-                    key = next(self.openai_key_cycler)
-                    self.openai_client.api_key = key
-                    logger.info(f"Server Creator: Mencoba OpenAI Key #{attempt+1}")
-                    response = await self.openai_client.chat.completions.create(
-                        model="gpt-4o-mini",
-                        messages=[{"role": "system", "content": system_prompt}, {"role": "user", "content": user_prompt}],
-                        response_format={"type": "json_object"}, temperature=0.7)
-                    cleaned = re.sub(r'```json\s*|\s*```', '', response.choices[0].message.content.strip(), flags=re.DOTALL)
-                    if not cleaned: raise ValueError("Respons JSON dari OpenAI kosong.")
-                    proposal_json = json.loads(cleaned)
-                    if proposal_json:
-                        ai_used = "OpenAI"
-                        logger.info("AI (OpenAI) berhasil generate Proposal.")
-                        break # Keluar loop jika berhasil
-                except Exception as e:
-                    logger.warning(f"Server Creator: OpenAI Key #{attempt+1} gagal: {e}")
-                    if "rate_limit_exceeded" in str(e).lower() or "429" in str(e):
-                        if attempt < max_retries - 1:
-                            await asyncio.sleep(1)
-                            continue
-                        else:
-                            logger.error("Semua OpenAI keys rate limited.") # Log jika semua key rate limited
+                logger.warning(f"Server Creator: OpenAI Key #{attempt+1} gagal: {e}")
+                if "rate_limit_exceeded" in str(e).lower() or "429" in str(e):
+                    if attempt < max_retries - 1:
+                        await asyncio.sleep(1)
+                        continue
                     else:
-                         # Error lain, log dan lanjut fallback (jika ada) atau raise error
-                         logger.error(f"Error OpenAI non-rate-limit: {e}")
-                         break # Hentikan percobaan OpenAI jika error lain
+                        logger.error("Semua OpenAI keys rate limited.")
+                        return None
+                else:
+                     return None
+        return None
 
-        # Jika semua gagal
+    async def _try_openrouter(self, system_prompt: str, user_prompt: str) -> Optional[Dict[str, Any]]:
+        if not self.openrouter_key_cycler: return None
+        try:
+            key = next(self.openrouter_key_cycler)
+            async with httpx.AsyncClient(timeout=60.0) as client:
+                logger.info(f"Server Creator: Mencoba OpenRouter...")
+                payload = {
+                    "model": "mistralai/mistral-7b-instruct:free",
+                    "messages": [{"role": "system", "content": system_prompt}, {"role": "user", "content": user_prompt}],
+                    "response_format": {"type": "json_object"},
+                    "temperature": 0.7, "max_tokens": 2048
+                }
+                headers = {"Authorization": f"Bearer {key}"}
+                if hasattr(self, 'openrouter_headers'): headers.update(self.openrouter_headers)
+
+                response = await client.post("https://openrouter.ai/api/v1/chat/completions", json=payload, headers=headers)
+                response.raise_for_status()
+                cleaned = re.sub(r'```json\s*|\s*```', '', response.json()["choices"][0]["message"]["content"].strip(), flags=re.DOTALL)
+                if not cleaned: raise ValueError("Respons JSON kosong.")
+                data = json.loads(cleaned)
+                logger.info("AI (OpenRouter) berhasil generate.")
+                return data
+        except Exception as e:
+            logger.warning(f"Server Creator: OpenRouter gagal: {e}")
+            await asyncio.sleep(1)
+            return None
+
+    async def _try_agentrouter(self, system_prompt: str, user_prompt: str) -> Optional[Dict[str, Any]]:
+        if not self.agentrouter_key_cycler: return None
+        try:
+            key = next(self.agentrouter_key_cycler)
+            logger.info(f"Server Creator: Mencoba AgentRouter...")
+            client = AsyncOpenAI(api_key=key, base_url="https://agentrouter.org/v1", timeout=45.0)
+            response = await client.chat.completions.create(
+                model="gpt-4o-mini",
+                messages=[{"role": "system", "content": system_prompt}, {"role": "user", "content": user_prompt}],
+                response_format={"type": "json_object"},
+                temperature=0.7
+            )
+            cleaned = re.sub(r'```json\s*|\s*```', '', response.choices[0].message.content.strip(), flags=re.DOTALL)
+            if not cleaned: raise ValueError("Respons JSON kosong.")
+            data = json.loads(cleaned)
+            logger.info("AI (AgentRouter) berhasil generate.")
+            return data
+        except Exception as e:
+            logger.warning(f"Server Creator: AgentRouter gagal: {e}")
+            await asyncio.sleep(1)
+            return None
+
+    async def _get_ai_proposal(self, system_prompt: str, user_prompt: str) -> Dict[str, Any]:
+        """Menghasilkan proposal dari AI dengan fallback lengkap."""
+        proposal_json = None
+
+        # Urutan Fallback: OpenRouter -> AgentRouter -> Gemini -> Deepseek -> OpenAI
+        proposal_json = await self._try_openrouter(system_prompt, user_prompt)
+        if not proposal_json: proposal_json = await self._try_agentrouter(system_prompt, user_prompt)
+        if not proposal_json: proposal_json = await self._try_gemini(system_prompt, user_prompt)
+        if not proposal_json: proposal_json = await self._try_deepseek(system_prompt, user_prompt)
+        if not proposal_json: proposal_json = await self._try_openai(system_prompt, user_prompt)
+
         if not proposal_json:
             raise Exception("Semua layanan AI gagal dihubungi atau error.")
 
@@ -422,11 +479,9 @@ class ServerCreatorCog(commands.Cog, name="ServerCreator"):
             await message_handler.edit(content=None, embed=embed, view=view)
         except Exception as e:
             logger.error(f"Error di create_server: {e}", exc_info=True)
-            # --- [PERBAIKAN] Pesan error lebih informatif ---
             error_msg = f"❌ Terjadi kesalahan: {e}"
             if "Semua layanan AI gagal" in str(e):
                 error_msg = "❌ Semua layanan AI sedang bermasalah atau gagal dihubungi. Coba lagi nanti."
-            # --- [AKHIR PERBAIKAN] ---
             await message_handler.edit(content=error_msg)
             ctx.command.reset_cooldown(ctx)
 
@@ -462,21 +517,16 @@ class ServerCreatorCog(commands.Cog, name="ServerCreator"):
             proposal = await self._get_ai_proposal(SYSTEM_PROMPT_SINGLE_CATEGORY, deskripsi)
             increment_ai_usage(ctx.author.id)
 
-            category_name_ai = proposal.get('category_name', 'Nama Kategori AI') # Gunakan .get()
-            # proposal['name'] = proposal.pop('category_name', 'Nama Kategori AI') # Jangan pop di sini, biarkan di view
-
+            category_name_ai = proposal.get('category_name', 'Nama Kategori AI')
             embed = discord.Embed(title=f"🤖 Proposal Kategori AI", description=f"Pilih channel yang ingin dibuat untuk kategori **{category_name_ai}**.", color=0x3498DB)
 
-            # Kirim proposal asli ke view, biarkan view yang handle pop
             view = CategoryCreationView(self, ctx, deskripsi, proposal)
             await message_handler.edit(content=None, embed=embed, view=view)
         except Exception as e:
             logger.error(f"Error di create_category: {e}", exc_info=True)
-            # --- [PERBAIKAN] Pesan error lebih informatif ---
             error_msg = f"❌ Terjadi kesalahan: {e}"
             if "Semua layanan AI gagal" in str(e):
                 error_msg = "❌ Semua layanan AI sedang bermasalah atau gagal dihubungi. Coba lagi nanti."
-            # --- [AKHIR PERBAIKAN] ---
             await message_handler.edit(content=error_msg)
             ctx.command.reset_cooldown(ctx)
 
@@ -517,4 +567,3 @@ class ServerCreatorCog(commands.Cog, name="ServerCreator"):
 
 async def setup(bot: commands.Bot):
     await bot.add_cog(ServerCreatorCog(bot))
-
