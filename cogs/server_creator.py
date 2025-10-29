@@ -4,19 +4,21 @@ from discord import ui
 import asyncio
 import logging
 import json
+import re # Import re
 from typing import List, Dict, Any, Optional
 from openai import AsyncOpenAI
-import itertools # Import itertools untuk key cycling
+import google.generativeai as genai # Import Gemini
+import httpx # Import httpx
+import itertools
 
-# --- [BARU REQ #3] Import database untuk limit AI ---
+# Import database untuk limit AI
 from utils.database import check_ai_limit, increment_ai_usage, get_user_rank
-# --- [AKHIR PERBAIKAN] ---
 
 # Mengambil logger
 logger = logging.getLogger(__name__)
 
 # =================================================================================
-# PROMPT ENGINEERING UNTUK OPENAI
+# PROMPT ENGINEERING UNTUK OPENAI (Tetap sama)
 # =================================================================================
 
 SYSTEM_PROMPT_FULL_SERVER = """
@@ -67,11 +69,10 @@ ATURAN KETAT:
 """
 
 # =================================================================================
-# UI COMPONENTS (Tombol, Tampilan, dll.)
+# UI COMPONENTS (Tombol, Tampilan, dll.) - Tetap sama
 # =================================================================================
 
 class ChannelToggleButton(ui.Button):
-    """Tombol untuk memilih/membatalkan pilihan channel."""
     def __init__(self, category_name: str, channel_data: Dict[str, str], selected: bool = True):
         self.category_name = category_name; self.channel_data = channel_data; self.selected = selected
         style = discord.ButtonStyle.green if self.selected else discord.ButtonStyle.secondary
@@ -86,7 +87,6 @@ class ChannelToggleButton(ui.Button):
         await interaction.response.edit_message(view=self.view)
 
 class RoleToggleButton(ui.Button):
-    """Tombol untuk memilih/membatalkan pembuatan role."""
     def __init__(self, create_roles: bool = True):
         self.create_roles = create_roles
         style = discord.ButtonStyle.green if self.create_roles else discord.ButtonStyle.secondary
@@ -102,7 +102,6 @@ class RoleToggleButton(ui.Button):
         await interaction.response.edit_message(view=self.view)
 
 class BaseInteractiveView(ui.View):
-    """Kelas dasar untuk view yang interaktif."""
     def __init__(self, cog, ctx: commands.Context, deskripsi: str, timeout: int = 600):
         super().__init__(timeout=timeout)
         self.cog = cog
@@ -120,11 +119,9 @@ class BaseInteractiveView(ui.View):
         for item in self.children: item.disabled = True
 
     async def handle_refresh(self, interaction: discord.Interaction):
-        """Logika umum untuk tombol refresh."""
         raise NotImplementedError
 
 class ServerCreationView(BaseInteractiveView):
-    """Tampilan utama untuk !createserver."""
     def __init__(self, cog, ctx: commands.Context, deskripsi: str, proposal: Dict[str, Any]):
         super().__init__(cog, ctx, deskripsi)
         self.proposal = proposal
@@ -146,7 +143,6 @@ class ServerCreationView(BaseInteractiveView):
         elif not sel and chan in self.selections[cat]: self.selections[cat].remove(chan)
 
     async def handle_refresh(self, interaction: discord.Interaction):
-        # --- [BARU REQ #3] Cek limit sebelum refresh ---
         can_use, remaining, limit = check_ai_limit(self.ctx.author.id)
         if not can_use:
             rank = get_user_rank(self.ctx.author.id)
@@ -157,10 +153,8 @@ class ServerCreationView(BaseInteractiveView):
                 ephemeral=True
             )
             return
-        # --- [AKHIR PERBAIKAN] ---
 
         await interaction.response.edit_message(content=f"🔄 Meminta proposal baru dari AI untuk: *\"{self.deskripsi}\"*...", view=None, embed=None)
-        # Panggil kembali fungsi command utama, yang sudah punya pengecekan limit
         await self.cog.create_server(self.ctx, deskripsi=self.deskripsi, existing_message=interaction.message)
 
     class ConfirmButton(ui.Button):
@@ -211,14 +205,10 @@ class ServerCreationView(BaseInteractiveView):
             await view.handle_refresh(interaction)
 
 class CategoryCreationView(ServerCreationView):
-    """Tampilan untuk !createcategory, mewarisi fungsionalitas dari ServerCreationView."""
     def __init__(self, cog, ctx: commands.Context, deskripsi: str, proposal: Dict[str, Any]):
-        # Siapkan struktur data proposal agar kompatibel dengan parent class
         super_proposal = {'categories': [{'name': proposal.get('category_name', 'Nama Kategori'), 'channels': proposal.get('channels', [])}]}
         super().__init__(cog, ctx, deskripsi, super_proposal)
-        # Pastikan selections terinisialisasi dengan benar
         self.selections: Dict[str, List[Dict]] = {c['name']: list(c['channels']) for c in self.proposal.get('categories', [])}
-
 
     def _populate_items(self):
         self.clear_items()
@@ -230,7 +220,6 @@ class CategoryCreationView(ServerCreationView):
         self.add_item(self.RefreshButton())
 
     async def handle_refresh(self, interaction: discord.Interaction):
-        # --- [BARU REQ #3] Cek limit sebelum refresh ---
         can_use, remaining, limit = check_ai_limit(self.ctx.author.id)
         if not can_use:
             rank = get_user_rank(self.ctx.author.id)
@@ -241,7 +230,6 @@ class CategoryCreationView(ServerCreationView):
                 ephemeral=True
             )
             return
-        # --- [AKHIR PERBAIKAN] ---
 
         await interaction.response.edit_message(content=f"🔄 Meminta proposal baru dari AI untuk: *\"{self.deskripsi}\"*...", view=None, embed=None)
         await self.cog.create_category(self.ctx, deskripsi=self.deskripsi, existing_message=interaction.message)
@@ -263,9 +251,9 @@ class CategoryCreationView(ServerCreationView):
                         await asyncio.sleep(0.5)
                         if ch['type'] == 'text': await category.create_text_channel(name=ch['name'])
                         elif ch['type'] == 'voice': await category.create_voice_channel(name=ch['name'])
-                        elif ch['type'] == 'forum': await category.create_forum(name=ch['name']) # Tambahkan forum
-                        logs.append(f"  - Channel `{ch['name']}` (`{ch['type']}`) dibuat.") # Tambahkan log
-                except Exception as e: logs.append(f"❌ Gagal membuat kategori atau channel `{cat_name}`: {e}") # Perbaiki log error
+                        elif ch['type'] == 'forum': await category.create_forum(name=ch['name'])
+                        logs.append(f"  - Channel `{ch['name']}` (`{ch['type']}`) dibuat.")
+                except Exception as e: logs.append(f"❌ Gagal membuat kategori atau channel `{cat_name}`: {e}")
             result_message = "\n".join(logs) if logs else "Tidak ada yang dibuat."
             await interaction.edit_original_response(content=result_message, view=None)
 
@@ -275,58 +263,131 @@ class CategoryCreationView(ServerCreationView):
 class ServerCreatorCog(commands.Cog, name="ServerCreator"):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
-        self.client = None
-        self.openai_key_cycler = None # Tambahkan key cycler
-        if bot.config.OPENAI_API_KEYS:
-            self.openai_key_cycler = itertools.cycle(bot.config.OPENAI_API_KEYS) # Gunakan itertools
-            # Ambil key pertama untuk inisialisasi client
-            first_key = bot.config.OPENAI_API_KEYS[0]
-            self.client = AsyncOpenAI(api_key=first_key)
-            logger.info(f"✅ OpenAI client untuk Server Creator berhasil diinisialisasi (menggunakan {len(bot.config.OPENAI_API_KEYS)} keys).")
+        self.config = bot.config # Tambahkan config
+        # --- [BARU] Tambahkan key cyclers ---
+        self.openai_client = None # Ganti nama client agar lebih jelas
+        self.openai_key_cycler = itertools.cycle(self.config.OPENAI_API_KEYS) if self.config.OPENAI_API_KEYS else None
+        self.gemini_key_cycler = itertools.cycle(self.config.GEMINI_API_KEYS) if self.config.GEMINI_API_KEYS else None
+        self.deepseek_key_cycler = itertools.cycle(self.config.DEEPSEEK_API_KEYS) if self.config.DEEPSEEK_API_KEYS else None
+
+        if self.openai_key_cycler:
+            first_key = self.config.OPENAI_API_KEYS[0]
+            self.openai_client = AsyncOpenAI(api_key=first_key, timeout=30.0) # Set timeout
+            logger.info(f"✅ OpenAI client untuk Server Creator berhasil diinisialisasi (menggunakan {len(self.config.OPENAI_API_KEYS)} keys).")
         else:
-            logger.warning("⚠️ OPENAI_API_KEYS tidak ada, Server Creator tidak akan berfungsi.")
+            logger.warning("⚠️ OPENAI_API_KEYS tidak ada.")
+        if not self.gemini_key_cycler: logger.warning("⚠️ GEMINI_API_KEYS tidak ada.")
+        if not self.deepseek_key_cycler: logger.warning("⚠️ DEEPSEEK_API_KEYS tidak ada.")
+        # --- [AKHIR PERBAIKAN] ---
 
+    # --- [BARU] Fungsi AI dengan Fallback ---
     async def _get_ai_proposal(self, system_prompt: str, user_prompt: str) -> Dict[str, Any]:
-        if not self.client or not self.openai_key_cycler:
-            raise ValueError("OpenAI client atau key cycler tidak diinisialisasi.")
+        """Menghasilkan proposal dari AI dengan fallback."""
+        proposal_json = None
+        ai_used = "Tidak ada"
 
-        # --- [BARU REQ #2] Logika coba key lain jika rate limit ---
-        max_retries = len(self.bot.config.OPENAI_API_KEYS)
-        for attempt in range(max_retries):
+        # Coba Gemini
+        if self.gemini_key_cycler:
             try:
-                current_key = next(self.openai_key_cycler)
-                self.client.api_key = current_key # Set key saat ini untuk client
-                logger.info(f"Server Creator: Mencoba OpenAI Key #{attempt+1}")
+                key = next(self.gemini_key_cycler)
+                genai.configure(api_key=key)
+                model = genai.GenerativeModel('gemini-1.5-flash')
+                logger.info(f"Server Creator: Mencoba Gemini...")
+                response = await model.generate_content_async(
+                    [system_prompt, user_prompt], # Kirim kedua prompt
+                    generation_config=genai.types.GenerationConfig(
+                        response_mime_type="application/json", temperature=0.7
+                    ),
+                    request_options={"timeout": 60}
+                )
+                if response.prompt_feedback.block_reason:
+                    raise Exception(f"Gemini diblokir: {response.prompt_feedback.block_reason.name}")
+                if response.candidates and response.candidates[0].finish_reason.name != "STOP":
+                     raise Exception(f"Gemini finish reason: {response.candidates[0].finish_reason.name}")
 
-                response = await self.client.chat.completions.create(
-                    model="gpt-4o-mini",
-                    messages=[{"role": "system", "content": system_prompt}, {"role": "user", "content": user_prompt}],
-                    response_format={"type": "json_object"}, temperature=0.7)
+                cleaned = re.sub(r'```json\s*|\s*```', '', response.text.strip(), flags=re.DOTALL)
+                if not cleaned: raise ValueError("Respons JSON dari Gemini kosong.")
 
-                # Jika berhasil, parse dan return
-                return json.loads(response.choices[0].message.content)
-
+                proposal_json = json.loads(cleaned)
+                if proposal_json:
+                     ai_used = "Gemini"
+                     logger.info("AI (Gemini) berhasil generate Proposal.")
             except Exception as e:
-                logger.warning(f"Server Creator: OpenAI Key #{attempt+1} gagal: {e}")
-                if "rate_limit_exceeded" in str(e).lower() or "429" in str(e):
-                    if attempt < max_retries - 1:
-                        await asyncio.sleep(1) # Tunggu sebentar sebelum coba key lain
-                        continue # Coba key berikutnya
+                logger.warning(f"Server Creator: Gemini gagal: {e}")
+                await asyncio.sleep(1)
+
+        # Coba Deepseek jika Gemini gagal
+        if not proposal_json and self.deepseek_key_cycler:
+            try:
+                key = next(self.deepseek_key_cycler)
+                async with httpx.AsyncClient(timeout=40.0) as client:
+                    logger.info(f"Server Creator: Mencoba Deepseek...")
+                    response = await client.post(
+                        "https://api.deepseek.com/chat/completions",
+                        json={
+                            "model": "deepseek-chat",
+                            # Gabungkan prompt untuk Deepseek
+                            "messages": [{"role": "system", "content": system_prompt}, {"role": "user", "content": user_prompt}],
+                            "response_format": {"type": "json_object"},
+                            "temperature": 0.7
+                        },
+                        headers={"Authorization": f"Bearer {key}"}
+                    )
+                    response.raise_for_status()
+                    cleaned = re.sub(r'```json\s*|\s*```', '', response.json()["choices"][0]["message"]["content"].strip(), flags=re.DOTALL)
+                    if not cleaned: raise ValueError("Respons JSON dari Deepseek kosong.")
+                    proposal_json = json.loads(cleaned)
+                    if proposal_json:
+                        ai_used = "Deepseek"
+                        logger.info("AI (Deepseek) berhasil generate Proposal.")
+            except Exception as e:
+                logger.warning(f"Server Creator: Deepseek gagal: {e}")
+                await asyncio.sleep(1)
+
+        # Coba OpenAI jika semua gagal
+        if not proposal_json and self.openai_key_cycler and self.openai_client:
+            max_retries = len(self.bot.config.OPENAI_API_KEYS)
+            for attempt in range(max_retries):
+                try:
+                    key = next(self.openai_key_cycler)
+                    self.openai_client.api_key = key
+                    logger.info(f"Server Creator: Mencoba OpenAI Key #{attempt+1}")
+                    response = await self.openai_client.chat.completions.create(
+                        model="gpt-4o-mini",
+                        messages=[{"role": "system", "content": system_prompt}, {"role": "user", "content": user_prompt}],
+                        response_format={"type": "json_object"}, temperature=0.7)
+                    cleaned = re.sub(r'```json\s*|\s*```', '', response.choices[0].message.content.strip(), flags=re.DOTALL)
+                    if not cleaned: raise ValueError("Respons JSON dari OpenAI kosong.")
+                    proposal_json = json.loads(cleaned)
+                    if proposal_json:
+                        ai_used = "OpenAI"
+                        logger.info("AI (OpenAI) berhasil generate Proposal.")
+                        break # Keluar loop jika berhasil
+                except Exception as e:
+                    logger.warning(f"Server Creator: OpenAI Key #{attempt+1} gagal: {e}")
+                    if "rate_limit_exceeded" in str(e).lower() or "429" in str(e):
+                        if attempt < max_retries - 1:
+                            await asyncio.sleep(1)
+                            continue
+                        else:
+                            logger.error("Semua OpenAI keys rate limited.") # Log jika semua key rate limited
                     else:
-                        raise Exception("Semua OpenAI API keys mengalami rate limit.") from e
-                else:
-                    # Error lain selain rate limit, langsung raise
-                    raise e
-        # Jika loop selesai tanpa return (seharusnya tidak terjadi jika ada key)
-        raise Exception("Gagal mendapatkan proposal AI setelah mencoba semua keys.")
-        # --- [AKHIR PERBAIKAN REQ #2] ---
+                         # Error lain, log dan lanjut fallback (jika ada) atau raise error
+                         logger.error(f"Error OpenAI non-rate-limit: {e}")
+                         break # Hentikan percobaan OpenAI jika error lain
+
+        # Jika semua gagal
+        if not proposal_json:
+            raise Exception("Semua layanan AI gagal dihubungi atau error.")
+
+        return proposal_json
+    # --- [AKHIR PERBAIKAN] ---
 
 
     @commands.command(name="createserver", help="Membuat struktur server lengkap menggunakan proposal AI.")
     @commands.has_permissions(administrator=True)
     @commands.cooldown(1, 120, commands.BucketType.user)
     async def create_server(self, ctx: commands.Context, *, deskripsi: str, existing_message: Optional[discord.Message] = None):
-        # --- [BARU REQ #3] Cek Limitasi AI ---
         can_use, remaining, limit = check_ai_limit(ctx.author.id)
         if not can_use:
             rank = get_user_rank(ctx.author.id)
@@ -335,31 +396,24 @@ class ServerCreatorCog(commands.Cog, name="ServerCreator"):
             await ctx.send(
                 f"❌ Batas harian AI Anda (Rank: **{rank.title()}**) telah tercapai ({usage_today}/{limit_display}). Coba lagi besok."
             )
-            # Reset cooldown jika gagal karena limit
             ctx.command.reset_cooldown(ctx)
             return
-        # --- [AKHIR PERBAIKAN] ---
 
         message_handler = existing_message
         if not message_handler:
             message_handler = await ctx.send(f"🤖 AI sedang merancang proposal server untuk: *\"{deskripsi}\"*... mohon tunggu.")
         else:
-            # Pastikan pesan bisa diedit (cek jika sudah di-defer sebelumnya)
             try:
                 await message_handler.edit(content=f"🤖 AI sedang merancang proposal server untuk: *\"{deskripsi}\"*... mohon tunggu.", view=None, embed=None)
             except discord.NotFound:
-                message_handler = await ctx.send(f"🤖 AI sedang merancang proposal server untuk: *\"{deskripsi}\"*... mohon tunggu.") # Kirim baru jika pesan lama hilang
+                message_handler = await ctx.send(f"🤖 AI sedang merancang proposal server untuk: *\"{deskripsi}\"*... mohon tunggu.")
             except discord.HTTPException as e:
                  logger.error(f"Gagal edit pesan di create_server (HTTP {e.status}): {e.text}")
-                 await ctx.send("Terjadi error saat update status, proses tetap berjalan.") # Info ke user
-
+                 await ctx.send("Terjadi error saat update status, proses tetap berjalan.")
 
         try:
             proposal = await self._get_ai_proposal(SYSTEM_PROMPT_FULL_SERVER, deskripsi)
-
-            # --- [BARU REQ #3] Tambah hitungan AI usage SETELAH AI berhasil ---
             increment_ai_usage(ctx.author.id)
-            # --- [AKHIR PERBAIKAN] ---
 
             embed = discord.Embed(title=f"🤖 Proposal Server AI: {proposal.get('server_name', 'Tanpa Nama')}", description="Pilih channel yang ingin dibuat. Anda juga bisa meminta proposal baru atau membatalkan.", color=0x5865F2)
             role_list = ", ".join([f"`{r['name']}`" for r in proposal.get('roles', [])]) or "Tidak ada"
@@ -368,8 +422,12 @@ class ServerCreatorCog(commands.Cog, name="ServerCreator"):
             await message_handler.edit(content=None, embed=embed, view=view)
         except Exception as e:
             logger.error(f"Error di create_server: {e}", exc_info=True)
-            await message_handler.edit(content=f"❌ Terjadi kesalahan saat berkomunikasi dengan AI: {e}")
-             # Reset cooldown jika gagal karena error AI
+            # --- [PERBAIKAN] Pesan error lebih informatif ---
+            error_msg = f"❌ Terjadi kesalahan: {e}"
+            if "Semua layanan AI gagal" in str(e):
+                error_msg = "❌ Semua layanan AI sedang bermasalah atau gagal dihubungi. Coba lagi nanti."
+            # --- [AKHIR PERBAIKAN] ---
+            await message_handler.edit(content=error_msg)
             ctx.command.reset_cooldown(ctx)
 
 
@@ -377,7 +435,6 @@ class ServerCreatorCog(commands.Cog, name="ServerCreator"):
     @commands.has_permissions(administrator=True)
     @commands.cooldown(1, 60, commands.BucketType.user)
     async def create_category(self, ctx: commands.Context, *, deskripsi: str, existing_message: Optional[discord.Message] = None):
-        # --- [BARU REQ #3] Cek Limitasi AI ---
         can_use, remaining, limit = check_ai_limit(ctx.author.id)
         if not can_use:
             rank = get_user_rank(ctx.author.id)
@@ -386,45 +443,41 @@ class ServerCreatorCog(commands.Cog, name="ServerCreator"):
             await ctx.send(
                 f"❌ Batas harian AI Anda (Rank: **{rank.title()}**) telah tercapai ({usage_today}/{limit_display}). Coba lagi besok."
             )
-            # Reset cooldown jika gagal karena limit
             ctx.command.reset_cooldown(ctx)
             return
-        # --- [AKHIR PERBAIKAN] ---
 
         message_handler = existing_message
         if not message_handler:
             message_handler = await ctx.send(f"🤖 AI sedang merancang proposal kategori untuk: *\"{deskripsi}\"*...")
         else:
-             # Pastikan pesan bisa diedit
             try:
                 await message_handler.edit(content=f"🤖 AI sedang merancang proposal kategori untuk: *\"{deskripsi}\"*...", view=None, embed=None)
             except discord.NotFound:
-                message_handler = await ctx.send(f"🤖 AI sedang merancang proposal kategori untuk: *\"{deskripsi}\"*...") # Kirim baru jika hilang
+                message_handler = await ctx.send(f"🤖 AI sedang merancang proposal kategori untuk: *\"{deskripsi}\"*...")
             except discord.HTTPException as e:
                  logger.error(f"Gagal edit pesan di create_category (HTTP {e.status}): {e.text}")
-                 await ctx.send("Terjadi error saat update status, proses tetap berjalan.") # Info ke user
-
+                 await ctx.send("Terjadi error saat update status, proses tetap berjalan.")
 
         try:
             proposal = await self._get_ai_proposal(SYSTEM_PROMPT_SINGLE_CATEGORY, deskripsi)
-
-            # --- [BARU REQ #3] Tambah hitungan AI usage SETELAH AI berhasil ---
             increment_ai_usage(ctx.author.id)
-            # --- [AKHIR PERBAIKAN] ---
 
-            # proposal['name'] = proposal.pop('category_name') # -> Ini menyebabkan error jika key tidak ada
-            # Perbaikan: Gunakan .get() dengan default value
-            category_name_ai = proposal.pop('category_name', 'Nama Kategori AI') # Ambil dan hapus 'category_name', beri default
-            proposal['name'] = category_name_ai # Tetapkan nama kategori yang sudah diambil
+            category_name_ai = proposal.get('category_name', 'Nama Kategori AI') # Gunakan .get()
+            # proposal['name'] = proposal.pop('category_name', 'Nama Kategori AI') # Jangan pop di sini, biarkan di view
+
             embed = discord.Embed(title=f"🤖 Proposal Kategori AI", description=f"Pilih channel yang ingin dibuat untuk kategori **{category_name_ai}**.", color=0x3498DB)
 
-            # Buat instance view dengan proposal yang sudah dimodifikasi
+            # Kirim proposal asli ke view, biarkan view yang handle pop
             view = CategoryCreationView(self, ctx, deskripsi, proposal)
             await message_handler.edit(content=None, embed=embed, view=view)
         except Exception as e:
             logger.error(f"Error di create_category: {e}", exc_info=True)
-            await message_handler.edit(content=f"❌ Terjadi kesalahan saat berkomunikasi dengan AI: {e}")
-            # Reset cooldown jika gagal karena error AI
+            # --- [PERBAIKAN] Pesan error lebih informatif ---
+            error_msg = f"❌ Terjadi kesalahan: {e}"
+            if "Semua layanan AI gagal" in str(e):
+                error_msg = "❌ Semua layanan AI sedang bermasalah atau gagal dihubungi. Coba lagi nanti."
+            # --- [AKHIR PERBAIKAN] ---
+            await message_handler.edit(content=error_msg)
             ctx.command.reset_cooldown(ctx)
 
 
@@ -464,3 +517,4 @@ class ServerCreatorCog(commands.Cog, name="ServerCreator"):
 
 async def setup(bot: commands.Bot):
     await bot.add_cog(ServerCreatorCog(bot))
+
