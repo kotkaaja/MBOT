@@ -10,6 +10,7 @@ import io
 import re # Import re untuk membersihkan output JSON
 import json # Import json
 import itertools # Import itertools
+import asyncio # Import asyncio
 
 # Import fungsi database untuk cooldown
 from utils.database import check_ai_limit, increment_ai_usage, get_user_rank
@@ -413,23 +414,162 @@ class CSPanelView(ui.View):
         await interaction.response.send_message("Pilih server di mana karaktermu akan bermain:", view=ServerSelectionView(self.bot), ephemeral=True)
 
 # ============================
-# KELAS COG UTAMA
+# KELAS COG UTAMA (DIPERBAIKI)
 # ============================
 class CharacterStoryCog(commands.Cog, name="CharacterStory"):
     def __init__(self, bot):
         self.bot = bot
-        # --- [BARU] Tambahkan key cyclers ---
+        # --- [PERBAIKAN] Tambahkan SEMUA key cyclers ---
         self.openai_key_cycler = itertools.cycle(self.bot.config.OPENAI_API_KEYS) if self.bot.config.OPENAI_API_KEYS else None
         self.gemini_key_cycler = itertools.cycle(self.bot.config.GEMINI_API_KEYS) if self.bot.config.GEMINI_API_KEYS else None
         self.deepseek_key_cycler = itertools.cycle(self.bot.config.DEEPSEEK_API_KEYS) if self.bot.config.DEEPSEEK_API_KEYS else None
+        self.openrouter_key_cycler = itertools.cycle(self.bot.config.OPENROUTER_API_KEYS) if self.bot.config.OPENROUTER_API_KEYS else None
+        self.agentrouter_key_cycler = itertools.cycle(self.bot.config.AGENTROUTER_API_KEYS) if self.bot.config.AGENTROUTER_API_KEYS else None
         # --- [AKHIR PERBAIKAN] ---
+
+        # Siapkan header OpenRouter jika ada key
+        if self.openrouter_key_cycler:
+            self.openrouter_headers = {
+                "HTTP-Referer": getattr(self.bot.config, 'OPENROUTER_SITE_URL', 'http://localhost'),
+                "X-Title": getattr(self.bot.config, 'OPENROUTER_SITE_NAME', 'MBOT'),
+            }
 
         if not hasattr(bot, 'persistent_views_added') or not bot.persistent_views_added:
             bot.add_view(CSPanelView(bot))
             bot.persistent_views_added = True
 
+    # --- [BARU] Fungsi AI Helper Terpisah ---
+
+    async def _try_openrouter(self, prompt: str) -> Optional[str]:
+        if not self.openrouter_key_cycler: return None
+        try:
+            key = next(self.openrouter_key_cycler)
+            async with httpx.AsyncClient(timeout=60.0) as client:
+                logger.info(f"Char Story: Mencoba OpenRouter...")
+                payload = {
+                    "model": "mistralai/mistral-7b-instruct:free",
+                    "messages": [{"role": "user", "content": prompt}],
+                    # Tidak ada response_format (minta teks)
+                    "temperature": 0.75, "max_tokens": 1500
+                }
+                headers = {"Authorization": f"Bearer {key}"}
+                if hasattr(self, 'openrouter_headers'): headers.update(self.openrouter_headers)
+
+                response = await client.post("https://openrouter.ai/api/v1/chat/completions", json=payload, headers=headers)
+                response.raise_for_status()
+                story_text = response.json()["choices"][0]["message"]["content"]
+                if story_text:
+                    logger.info("AI (OpenRouter) berhasil generate Char Story.")
+                    return story_text
+            return None
+        except Exception as e:
+            logger.warning(f"Char Story: OpenRouter gagal: {e}")
+            await asyncio.sleep(1)
+            return None
+
+    async def _try_agentrouter(self, prompt: str) -> Optional[str]:
+        if not self.agentrouter_key_cycler: return None
+        try:
+            key = next(self.agentrouter_key_cycler)
+            logger.info(f"Char Story: Mencoba AgentRouter...")
+            client = AsyncOpenAI(api_key=key, base_url="https://agentrouter.org/v1", timeout=45.0)
+            response = await client.chat.completions.create(
+                model="gpt-4o-mini",
+                messages=[{"role": "user", "content": prompt}],
+                # Tidak ada response_format (minta teks)
+                temperature=0.75,
+                max_tokens=1500
+            )
+            story_text = response.choices[0].message.content
+            if story_text:
+                logger.info("AI (AgentRouter) berhasil generate Char Story.")
+                return story_text
+            return None
+        except Exception as e:
+            logger.warning(f"Char Story: AgentRouter gagal: {e}")
+            await asyncio.sleep(1)
+            return None
+
+    async def _try_gemini(self, prompt: str) -> Optional[str]:
+        if not self.gemini_key_cycler: return None
+        try:
+            key = next(self.gemini_key_cycler)
+            genai.configure(api_key=key)
+            model = genai.GenerativeModel('gemini-1.5-flash')
+            logger.info(f"Char Story: Mencoba Gemini...")
+            response = await model.generate_content_async(
+                prompt,
+                generation_config=genai.types.GenerationConfig(
+                    # Tidak ada response_mime_type (minta teks)
+                    temperature=0.75
+                ),
+                request_options={"timeout": 60}
+            )
+            if response.prompt_feedback.block_reason: raise Exception(f"Diblokir: {response.prompt_feedback.block_reason.name}")
+            if response.candidates and response.candidates[0].finish_reason.name != "STOP": raise Exception(f"Finish reason: {response.candidates[0].finish_reason.name}")
+            story_text = response.text
+            if story_text:
+                 logger.info("AI (Gemini) berhasil generate Char Story.")
+                 return story_text
+            return None
+        except Exception as e:
+            logger.warning(f"Char Story: Gemini gagal: {e}")
+            await asyncio.sleep(1)
+            return None
+
+    async def _try_deepseek(self, prompt: str) -> Optional[str]:
+        if not self.deepseek_key_cycler: return None
+        try:
+            key = next(self.deepseek_key_cycler)
+            async with httpx.AsyncClient(timeout=40.0) as client:
+                logger.info(f"Char Story: Mencoba Deepseek...")
+                response = await client.post(
+                    "https://api.deepseek.com/chat/completions",
+                    json={
+                        "model": "deepseek-chat",
+                        "messages": [{"role": "user", "content": prompt}],
+                        # Tidak ada response_format (minta teks)
+                        "temperature": 0.75,
+                        "max_tokens": 1500,
+                    },
+                    headers={"Authorization": f"Bearer {key}"}
+                )
+                response.raise_for_status()
+                story_text = response.json()["choices"][0]["message"]["content"]
+                if story_text:
+                    logger.info("AI (Deepseek) berhasil generate Char Story.")
+                    return story_text
+                return None
+        except Exception as e:
+            logger.warning(f"Char Story: Deepseek gagal: {e}")
+            await asyncio.sleep(1)
+            return None
+
+    async def _try_openai(self, prompt: str) -> Optional[str]:
+        if not self.openai_key_cycler: return None
+        try:
+            key = next(self.openai_key_cycler)
+            client = AsyncOpenAI(api_key=key, timeout=30.0)
+            logger.info(f"Char Story: Mencoba OpenAI...")
+            response = await client.chat.completions.create(
+                model="gpt-4o-mini",
+                messages=[{"role": "user", "content": prompt}],
+                # Tidak ada response_format (minta teks)
+                temperature=0.75,
+                max_tokens=1500,
+            )
+            story_text = response.choices[0].message.content
+            if story_text:
+                logger.info("AI (OpenAI) berhasil generate Char Story.")
+                return story_text
+            return None
+        except Exception as e:
+            logger.error(f"Char Story: OpenAI GAGAL (fallback terakhir): {e}")
+            return None
+
+    # --- [FUNGSI GENERATE STORY DIPERBAIKI] ---
     async def generate_story_from_ai(self, server: str, nama_char: str, tanggal_lahir: str, kota_asal: str, story_type: str, bakat: str, culture: str, detail: str, jenis_kelamin: str, level: str) -> Optional[str]:
-        """Menghasilkan story dari AI dengan fallback."""
+        """Menghasilkan story dari AI dengan fallback LENGKAP."""
 
         server_rules = SERVER_CONFIG[server]["rules"]
 
@@ -471,81 +611,33 @@ class CharacterStoryCog(commands.Cog, name="CharacterStory"):
         Output akhir harus berupa teks cerita saja dalam Bahasa Indonesia, tanpa judul atau format tambahan. Pastikan cerita yang dihasilkan menarik, konsisten, dan memenuhi semua aturan.
         """
 
-        # --- [BARU] Fallback Logic ---
+        # --- [PERBAIKAN] Fallback Logic Lengkap ---
         story_text = None
         ai_used = "Tidak ada"
 
-        # Coba Gemini
-        if self.gemini_key_cycler:
-            try:
-                key = next(self.gemini_key_cycler)
-                genai.configure(api_key=key)
-                model = genai.GenerativeModel('gemini-1.5-flash')
-                logger.info(f"Char Story: Mencoba Gemini...")
-                response = await model.generate_content_async(
-                    prompt,
-                    generation_config=genai.types.GenerationConfig(temperature=0.75), # Minta output teks biasa
-                    request_options={"timeout": 60}
-                )
-                if response.prompt_feedback.block_reason:
-                    raise Exception(f"Gemini diblokir: {response.prompt_feedback.block_reason.name}")
-                if response.candidates and response.candidates[0].finish_reason.name != "STOP":
-                     raise Exception(f"Gemini finish reason: {response.candidates[0].finish_reason.name}")
-                story_text = response.text
-                if story_text:
-                     ai_used = "Gemini"
-                     logger.info("AI (Gemini) berhasil generate Char Story.")
-            except Exception as e:
-                logger.warning(f"Char Story: Gemini gagal: {e}")
-                await asyncio.sleep(1)
+        # Urutan Fallback: OpenRouter -> AgentRouter -> Gemini -> Deepseek -> OpenAI
+        story_text = await self._try_openrouter(prompt)
+        if story_text: ai_used = "OpenRouter"
 
-        # Coba Deepseek jika Gemini gagal
-        if not story_text and self.deepseek_key_cycler:
-            try:
-                key = next(self.deepseek_key_cycler)
-                async with httpx.AsyncClient(timeout=40.0) as client:
-                    logger.info(f"Char Story: Mencoba Deepseek...")
-                    response = await client.post(
-                        "https://api.deepseek.com/chat/completions",
-                        json={
-                            "model": "deepseek-chat",
-                            "messages": [{"role": "user", "content": prompt}],
-                            "temperature": 0.75,
-                            "max_tokens": 1200,
-                        },
-                        headers={"Authorization": f"Bearer {key}"}
-                    )
-                    response.raise_for_status()
-                    story_text = response.json()["choices"][0]["message"]["content"]
-                    if story_text:
-                        ai_used = "Deepseek"
-                        logger.info("AI (Deepseek) berhasil generate Char Story.")
-            except Exception as e:
-                logger.warning(f"Char Story: Deepseek gagal: {e}")
-                await asyncio.sleep(1)
+        if not story_text:
+            story_text = await self._try_agentrouter(prompt)
+            if story_text: ai_used = "AgentRouter"
 
-        # Coba OpenAI jika semua gagal
-        if not story_text and self.openai_key_cycler:
-            try:
-                key = next(self.openai_key_cycler)
-                client = AsyncOpenAI(api_key=key, timeout=30.0)
-                logger.info(f"Char Story: Mencoba OpenAI...")
-                response = await client.chat.completions.create(
-                    model="gpt-4o-mini",
-                    messages=[{"role": "user", "content": prompt}],
-                    temperature=0.75,
-                    max_tokens=1200,
-                )
-                story_text = response.choices[0].message.content
-                if story_text:
-                    ai_used = "OpenAI"
-                    logger.info("AI (OpenAI) berhasil generate Char Story.")
-            except Exception as e:
-                logger.error(f"Char Story: OpenAI GAGAL (fallback terakhir): {e}")
-                # Jangan return None di sini, biarkan fungsi selesai dan return story_text (yang None)
+        if not story_text:
+            story_text = await self._try_gemini(prompt)
+            if story_text: ai_used = "Gemini"
+
+        if not story_text:
+            story_text = await self._try_deepseek(prompt)
+            if story_text: ai_used = "Deepseek"
+
+        if not story_text:
+            story_text = await self._try_openai(prompt)
+            if story_text: ai_used = "OpenAI"
         # --- [AKHIR PERBAIKAN] ---
 
         if story_text:
+            logger.info(f"AI ({ai_used}) berhasil generate Char Story.")
             cleaned_story = story_text.strip().replace("```", "")
             return cleaned_story
         else:
@@ -573,4 +665,3 @@ async def setup(bot):
     if not hasattr(bot, 'persistent_views_added'):
         bot.persistent_views_added = False
     await bot.add_cog(CharacterStoryCog(bot))
-
