@@ -7,7 +7,9 @@ from typing import Dict
 import io
 
 # Import fungsi database untuk cooldown
-from utils.database import check_char_story_cooldown, set_char_story_cooldown
+# --- [PERBAIKAN REQ #3]: Ganti check/set cooldown lama dengan check/increment AI limit baru ---
+from utils.database import check_ai_limit, increment_ai_usage, get_user_rank
+# --- [AKHIR PERBAIKAN] ---
 
 # Mengambil logger
 logger = logging.getLogger(__name__)
@@ -101,19 +103,19 @@ Story :
 - Character story minimal 4 paragraf.
 - Dalam penulisan tempat tanggal lahir dilarang menggunakan spasi , / atau - (Contoh benar: Los Santos , 03 Juni 2004)
 - Mudah dipahami dan dimengerti
-- Nama lengkap tulis kembali dalam cerita gausah lagi pakai tanda ( _ ) 
+- Nama lengkap tulis kembali dalam cerita gausah lagi pakai tanda ( _ )
 - Tulis kembali tanggal, bulan, tahun dan umur dalam cerita
 - Setiap pergantian paragraf baru harus enter / melangkah
 - Membuat paragraf agar terlihat rapih dan kelihatan paragraf nya jangan lupa pakai spasi . Jangan  rata kek jalan aspal
 - Menggunakan format yang telah disediakan
 - Setiap akhir paragraf dikasi tanda titik
-- Perhatikan penggunaan huruf setelah tanda koma dan titik dengan benar 
+- Perhatikan penggunaan huruf setelah tanda koma dan titik dengan benar
 - Yang huruf awalan memakai huruf kapital setelah tanda koma hanya boleh nama "Contoh :  Max Escobar""",
        "format": """**FORMAT CHARACTER STORY TEN ROLEPLAY**
 * Nama Character: {nama_char}
 * Usia Character: (Isi Manual)
 * Tempat Tanggal Lahir: ( Isi Manual Sesuai CS)
-* STORY CHARACTER : 
+* STORY CHARACTER :
 
 {story}"""
     },
@@ -121,16 +123,16 @@ Story :
         "name": "CPRP",
         "rules": """1. Sesuaikan antara umur dan tanggal lahir karakter yang anda buat di In Game (/stats) dengan umur dan tanggal lahir didalam ceritanya. Batas minimal umur dalam pembuatan CS dari 17 Tahun.
 2. Perhatikan penulisan huruf besar/kapital dan huruf kecil dalam pembuatan Story yang kalian buat, contohnya di awal paragraf/kalimat. Huruf besar/kapital juga bisa digunakan saat penulisan contoh :
-a.Nama orang = Grace Jhonatan 
-b. Nama negara = Amerika Serikat atau negara Amerika Serikat 
+a.Nama orang = Grace Jhonatan
+b. Nama negara = Amerika Serikat atau negara Amerika Serikat
 c. Nama kota = Kota Los Santos
 d. Nama hari = Senin
 e. Nama bulan = November
-f. Nama profesi = seorang Mekanik 
+f. Nama profesi = seorang Mekanik
 g. Hubungan kekerabatan = Ayah, Ibu, Kakak, Adik. Namun, apabila terdapat tambahan imbuhan (nya) pada hubungan kekerabatan, tidak perlu ditulis menggunakan huruf kapital seperti ayahnya, ibunya, kakaknya, adiknya
 3. Perhatikan penulisan tanda baca pada saat pembuatan Story seperti tanda (,) dan (.). Seperti diakhir setiap kalimat harus ada tanda titik (.) Contohnya: " Worick adalah seorang anak dari keluarga yang kaya, ayahnya merupakan saudagar terkenal di Kota Los Santos."
-4. Penulisan tanggal lahir tidak boleh menggunakan symbol ( / ) dan ( - ). Contohnya 17 Februari 1998 
-5. Character story wajib memiliki 4 paragraf (minimal) dan minimal 4 baris setiap paragraf, setiap akhir paragraf beri tanda ( .) 
+4. Penulisan tanggal lahir tidak boleh menggunakan symbol ( / ) dan ( - ). Contohnya 17 Februari 1998
+5. Character story wajib memiliki 4 paragraf (minimal) dan minimal 4 baris setiap paragraf, setiap akhir paragraf beri tanda ( .)
 6. Penulisan Nama Karakter dalam Story harus sesuai didalam cerita, tidak usah menggunakan tanda ( _ ). Contohnya: Grace Jhonatan atau Worick Arcangelo.
 7. Batas minimal level dalam pembuatan CS level 8 keatas
 8. Dilarang keras melakukan plagiarisme
@@ -142,7 +144,7 @@ g. Hubungan kekerabatan = Ayah, Ibu, Kakak, Adik. Namun, apabila terdapat tambah
 **Tanggal lahir [IC sesuai Id card]** : {tanggal_lahir}
 **Ss stats & Id card [Wajib]** : (Lampirkan manual)
 **Ss Tab Level in Game [Wajib]**: (Lampirkan manual, min Lvl 8)
-**Story** : 
+**Story** :
 
 {story}
 
@@ -245,7 +247,7 @@ class CSInputModal_Part2(ui.Modal):
     async def on_submit(self, interaction: discord.Interaction):
         # Tampilkan status "thinking" secara publik
         await interaction.response.defer()
-        
+
         # Kirim pesan bahwa proses sedang berjalan
         processing_msg = await interaction.followup.send(f"⏳ Character Story untuk **{self.part1_data['nama_char']}** sedang diproses oleh AI...")
 
@@ -296,9 +298,10 @@ class CSInputModal_Part2(ui.Modal):
                 embed=embed,
                 attachments=[story_file]
             )
-            
-            # Atur cooldown harian setelah berhasil membuat
-            set_char_story_cooldown(interaction.user.id)
+
+            # --- [PERBAIKAN REQ #3] Tambah hitungan AI usage SETELAH AI berhasil ---
+            increment_ai_usage(interaction.user.id)
+            # --- [AKHIR PERBAIKAN] ---
 
         except Exception as e:
             logger.error(f"Gagal membuat CS dengan OpenAI: {e}", exc_info=True)
@@ -382,7 +385,7 @@ class StoryTypeView(ui.View):
 # View untuk dropdown pemilihan server
 class ServerSelectionView(ui.View):
     def __init__(self, bot_instance):
-        super().__init__(timeout=180) 
+        super().__init__(timeout=180)
         self.bot = bot_instance
 
     @ui.select(
@@ -408,19 +411,24 @@ class ServerSelectionView(ui.View):
 # View utama yang berisi tombol untuk memulai proses
 class CSPanelView(ui.View):
     def __init__(self, bot_instance):
-        super().__init__(timeout=None) 
+        super().__init__(timeout=None)
         self.bot = bot_instance
 
     @ui.button(label="Buat Character Story", style=discord.ButtonStyle.primary, emoji="📝", custom_id="create_cs_button")
     async def create_cs(self, interaction: discord.Interaction, button: ui.Button):
-        # Cek cooldown sebelum memulai proses
-        if not check_char_story_cooldown(interaction.user.id):
+        # --- [PERBAIKAN REQ #3]: Cek limit AI ---
+        can_use, remaining, limit = check_ai_limit(interaction.user.id)
+        if not can_use:
+            rank = get_user_rank(interaction.user.id)
+            limit_display = "Unlimited" if limit == -1 else limit
+            usage_today = (limit - remaining) if limit > 0 else 0
             await interaction.response.send_message(
-                "❌ Anda sudah membuat satu Character Story hari ini. Silakan coba lagi besok.",
+                f"❌ Batas harian AI Anda (Rank: **{rank.title()}**) untuk membuat CS telah tercapai ({usage_today}/{limit_display}). Coba lagi besok.",
                 ephemeral=True
             )
             return
-            
+        # --- [AKHIR PERBAIKAN] ---
+
         await interaction.response.send_message("Pilih server di mana karaktermu akan bermain:", view=ServerSelectionView(self.bot), ephemeral=True)
 
 # ============================
@@ -435,15 +443,15 @@ class CharacterStoryCog(commands.Cog, name="CharacterStory"):
 
     async def generate_story_from_ai(self, server: str, nama_char: str, tanggal_lahir: str, kota_asal: str, story_type: str, bakat: str, culture: str, detail: str, jenis_kelamin: str, level: str) -> str:
         """Menghasilkan story dari OpenAI berdasarkan input detail."""
-        
+
         if not self.bot.config.OPENAI_API_KEYS:
             raise Exception("API Key OpenAI tidak dikonfigurasi.")
-            
+
         api_key = self.bot.config.OPENAI_API_KEYS[0]
         client = AsyncOpenAI(api_key=api_key)
 
         server_rules = SERVER_CONFIG[server]["rules"]
-        
+
         story_direction = ""
         if story_type == "good_side":
             story_direction = "Cerita harus bernuansa 'goodside'. Fokus pada latar belakang karakter yang baik, normal, atau memiliki tujuan hidup yang positif. Alasan pindah ke Los Santos harus logis untuk mencari kehidupan lebih baik atau bergabung dengan faksi legal seperti kepolisian, medis, atau bisnis."
@@ -481,7 +489,7 @@ class CharacterStoryCog(commands.Cog, name="CharacterStory"):
 
         Output akhir harus berupa teks cerita saja dalam Bahasa Indonesia, tanpa judul atau format tambahan. Pastikan cerita yang dihasilkan menarik, konsisten, dan memenuhi semua aturan.
         """
-        
+
         logger.info(f"Mengirim prompt ke OpenAI untuk karakter {nama_char}...")
         response = await client.chat.completions.create(
             model="gpt-4o-mini",
@@ -489,10 +497,10 @@ class CharacterStoryCog(commands.Cog, name="CharacterStory"):
             temperature=0.75,
             max_tokens=1200,
         )
-        
+
         story_text = response.choices[0].message.content
         cleaned_story = story_text.strip().replace("```", "")
-        
+
         return cleaned_story
 
     @commands.command(name="setupcs")
