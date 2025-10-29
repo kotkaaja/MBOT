@@ -45,13 +45,15 @@ class Config:
     def __init__(self):
         # Variabel Inti & API Keys
         self.BOT_TOKEN = os.getenv("BOT_TOKEN")
+        
+        # --- [PERUBAHAN] Load SEMUA AI Keys sebagai LISTS (Daftar) ---
+        # Ini untuk support multi-key (Req #2)
         self.OPENAI_API_KEYS = [k.strip() for k in os.getenv("OPENAI_API_KEYS", "").split(',') if k.strip()]
         self.GEMINI_API_KEYS = [k.strip() for k in os.getenv("GEMINI_API_KEYS", "").split(',') if k.strip()]
         self.DEEPSEEK_API_KEYS = [k.strip() for k in os.getenv("DEEPSEEK_API_KEYS", "").split(',') if k.strip()]
-        
-        # --- [BARU] Tambahkan API Key untuk OpenRouter & AgentRouter ---
-        self.OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
-        self.AGENTROUTER_API_KEY = os.getenv("AGENTROUTER_API_KEY") # <-- BARIS INI DITAMBAHKAN
+        self.OPENROUTER_API_KEYS = [k.strip() for k in os.getenv("OPENROUTER_API_KEY", "").split(',') if k.strip()]
+        self.AGENTROUTER_API_KEYS = [k.strip() for k in os.getenv("AGENTROUTER_API_KEY", "").split(',') if k.strip()]
+        # --- [AKHIR PERUBAHAN] ---
         
         # Header Opsional untuk OpenRouter
         self.OPENROUTER_SITE_URL = os.getenv("OPENROUTER_SITE_URL", "http://localhost") 
@@ -66,7 +68,11 @@ class Config:
         self.MAX_FILE_SIZE_MB = 3
         self.MAX_ARCHIVE_FILES = 5
         self.COMMAND_COOLDOWN_SECONDS = 60
-        self.DAILY_LIMIT_PER_USER = 10
+        
+        # --- [DIHAPUS] Limit ini akan diganti oleh sistem Pangkat (Rank) ---
+        # self.DAILY_LIMIT_PER_USER = 10 
+        # --- [AKHIR PENGHAPUSAN] ---
+        
         self.QUEUE_MAX_SIZE = 3
         self.CACHE_EXPIRE_HOURS = 24
 
