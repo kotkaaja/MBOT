@@ -335,6 +335,41 @@ def check_ai_limit(user_id: int) -> Tuple[bool, int, int]:
         logger.error(f"Gagal memeriksa AI limit untuk user {user_id}", exc_info=e)
         return (False, 0, 0)
 
+# Tambahkan di bagian bawah utils/database.py
+
+def add_rating(target_name: str, rater_id: int, stars: int, comment: str = None):
+    conn = get_db_connection()
+    if not conn: return False
+    try:
+        with conn.cursor() as cursor:
+            # Upsert: Jika user sudah rating target yang sama, update ratingnya
+            # Catatan: Ini butuh constraint unik, untuk simpelnya kita insert baru saja atau cek manual
+            # Untuk fitur ini kita buat user bisa rating berkali-kali atau kamu bisa batasi logic di Cog
+            cursor.execute(
+                "INSERT INTO ratings (target_name, rater_id, stars, comment) VALUES (%s, %s, %s, %s)",
+                (target_name, rater_id, stars, comment)
+            )
+        conn.commit()
+        return True
+    except Exception as e:
+        logger.error(f"Gagal menambah rating: {e}", exc_info=e)
+        conn.rollback()
+        return False
+
+def get_rating_stats(target_name: str):
+    conn = get_db_connection()
+    if not conn: return 0, 0
+    try:
+        with conn.cursor() as cursor:
+            cursor.execute("SELECT AVG(stars), COUNT(*) FROM ratings WHERE target_name = %s", (target_name,))
+            result = cursor.fetchone()
+            if result and result[0] is not None:
+                return round(result[0], 2), result[1] # Rata-rata, Total Vote
+            return 0, 0
+    except Exception as e:
+        logger.error(f"Gagal mengambil stats rating: {e}", exc_info=e)
+        return 0, 0
+
 def increment_ai_usage(user_id: int):
     """Menambah hitungan penggunaan AI harian pengguna."""
     conn = get_db_connection()
