@@ -195,7 +195,7 @@ async def on_guild_join(guild):
 # ============================
 async def load_cogs():
     """Memuat semua fitur (Cogs) dari direktori cogs."""
-    cogs_to_load = ['scanner', 'char_story', 'general', 'server_creator', 'converter', 'token', 'role_assigner', 'template_creator', 'ssrp_chatlog']
+    cogs_to_load = ['scanner', 'char_story', 'general', 'server_creator', 'converter', 'token', 'role_assigner', 'template_creator', 'ssrp_chatlog', 'dynamic_support']
     for cog_name in cogs_to_load:
         try:
             await bot.load_extension(f'cogs.{cog_name}')
