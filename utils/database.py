@@ -104,6 +104,17 @@ def init_database():
                     PRIMARY KEY (user_id, date)
                 );
             ''')
+            
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS ratings (
+                    id SERIAL PRIMARY KEY,
+                    target_name TEXT NOT NULL,
+                    rater_id BIGINT NOT NULL,
+                    stars INTEGER NOT NULL,
+                    comment TEXT,
+                    timestamp TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+                );
+            ''')
 
         # Commit perubahan ke database
         conn.commit()
