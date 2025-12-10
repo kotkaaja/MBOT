@@ -1,8 +1,8 @@
 import os
 import psycopg2
 import logging
-from datetime import date, datetime # Tambahkan datetime
-from typing import Tuple # <--- TAMBAHKAN IMPORT INI
+from datetime import date, datetime 
+from typing import Tuple 
 
 logger = logging.getLogger(__name__)
 
@@ -104,15 +104,27 @@ def init_database():
                     PRIMARY KEY (user_id, date)
                 );
             ''')
+
+            # =================================================================
+            # [BARU] Tabel untuk Fitur Dynamic Support (Rating & Config)
+            # =================================================================
+            # Tabel untuk menyimpan Log Channel Rating per server
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS rating_config (
+                    guild_id BIGINT PRIMARY KEY,
+                    log_channel_id BIGINT
+                );
+            ''')
             
+            # Tabel untuk menyimpan data Rating User
             cursor.execute('''
                 CREATE TABLE IF NOT EXISTS ratings (
                     id SERIAL PRIMARY KEY,
-                    target_name TEXT NOT NULL,
-                    rater_id BIGINT NOT NULL,
+                    topic_name TEXT NOT NULL,
+                    user_id BIGINT NOT NULL,
                     stars INTEGER NOT NULL,
-                    comment TEXT,
-                    timestamp TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+                    timestamp TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+                    CONSTRAINT unique_user_topic UNIQUE (topic_name, user_id)
                 );
             ''')
 
@@ -335,41 +347,6 @@ def check_ai_limit(user_id: int) -> Tuple[bool, int, int]:
         logger.error(f"Gagal memeriksa AI limit untuk user {user_id}", exc_info=e)
         return (False, 0, 0)
 
-# Tambahkan di bagian bawah utils/database.py
-
-def add_rating(target_name: str, rater_id: int, stars: int, comment: str = None):
-    conn = get_db_connection()
-    if not conn: return False
-    try:
-        with conn.cursor() as cursor:
-            # Upsert: Jika user sudah rating target yang sama, update ratingnya
-            # Catatan: Ini butuh constraint unik, untuk simpelnya kita insert baru saja atau cek manual
-            # Untuk fitur ini kita buat user bisa rating berkali-kali atau kamu bisa batasi logic di Cog
-            cursor.execute(
-                "INSERT INTO ratings (target_name, rater_id, stars, comment) VALUES (%s, %s, %s, %s)",
-                (target_name, rater_id, stars, comment)
-            )
-        conn.commit()
-        return True
-    except Exception as e:
-        logger.error(f"Gagal menambah rating: {e}", exc_info=e)
-        conn.rollback()
-        return False
-
-def get_rating_stats(target_name: str):
-    conn = get_db_connection()
-    if not conn: return 0, 0
-    try:
-        with conn.cursor() as cursor:
-            cursor.execute("SELECT AVG(stars), COUNT(*) FROM ratings WHERE target_name = %s", (target_name,))
-            result = cursor.fetchone()
-            if result and result[0] is not None:
-                return round(result[0], 2), result[1] # Rata-rata, Total Vote
-            return 0, 0
-    except Exception as e:
-        logger.error(f"Gagal mengambil stats rating: {e}", exc_info=e)
-        return 0, 0
-
 def increment_ai_usage(user_id: int):
     """Menambah hitungan penggunaan AI harian pengguna."""
     conn = get_db_connection()
@@ -390,3 +367,70 @@ def increment_ai_usage(user_id: int):
     except Exception as e:
         logger.error(f"Gagal menambah AI usage untuk user {user_id}", exc_info=e)
         conn.rollback()
+
+# =================================================================
+# [BARU] Fungsi Helper untuk Dynamic Support (Rating & Config)
+# =================================================================
+
+def set_rating_log_channel(guild_id: int, channel_id: int) -> bool:
+    """Mengatur channel log untuk notifikasi rating."""
+    conn = get_db_connection()
+    if not conn: return False
+    try:
+        with conn.cursor() as cursor:
+            cursor.execute(
+                "INSERT INTO rating_config (guild_id, log_channel_id) VALUES (%s, %s) ON CONFLICT (guild_id) DO UPDATE SET log_channel_id = EXCLUDED.log_channel_id",
+                (guild_id, channel_id)
+            )
+        conn.commit()
+        return True
+    except Exception as e:
+        logger.error(f"Gagal set rating log: {e}")
+        conn.rollback()
+        return False
+
+def get_rating_log_channel(guild_id: int) -> int or None:
+    """Mengambil ID channel log rating."""
+    conn = get_db_connection()
+    if not conn: return None
+    try:
+        with conn.cursor() as cursor:
+            cursor.execute("SELECT log_channel_id FROM rating_config WHERE guild_id = %s", (guild_id,))
+            res = cursor.fetchone()
+            return res[0] if res else None
+    except Exception as e:
+        logger.error(f"Gagal get rating log: {e}")
+        return None
+
+def add_rating(topic_name: str, user_id: int, stars: int) -> bool:
+    """Menambah atau mengupdate rating user untuk topik tertentu."""
+    conn = get_db_connection()
+    if not conn: return False
+    try:
+        with conn.cursor() as cursor:
+            # Upsert rating (jika user sudah rating, update nilainya)
+            cursor.execute(
+                "INSERT INTO ratings (topic_name, user_id, stars) VALUES (%s, %s, %s) ON CONFLICT (topic_name, user_id) DO UPDATE SET stars = EXCLUDED.stars, timestamp = CURRENT_TIMESTAMP",
+                (topic_name, user_id, stars)
+            )
+        conn.commit()
+        return True
+    except Exception as e:
+        logger.error(f"Gagal add rating: {e}")
+        conn.rollback()
+        return False
+
+def get_rating_stats(topic_name: str) -> Tuple[float, int]:
+    """Mengambil rata-rata rating dan jumlah vote untuk topik tertentu."""
+    conn = get_db_connection()
+    if not conn: return 0.0, 0
+    try:
+        with conn.cursor() as cursor:
+            cursor.execute("SELECT AVG(stars), COUNT(*) FROM ratings WHERE topic_name = %s", (topic_name,))
+            res = cursor.fetchone()
+            if res and res[0] is not None:
+                return round(float(res[0]), 2), res[1]
+            return 0.0, 0
+    except Exception as e:
+        logger.error(f"Gagal get stats: {e}")
+        return 0.0, 0
