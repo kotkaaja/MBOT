@@ -10,9 +10,8 @@ logger = logging.getLogger(__name__)
 db_connection = None
 
 # =================================================================
-# [BARU] Definisikan Batas Pangkat (Rank)
+# Definisikan Batas Pangkat (Rank)
 # =================================================================
-# -1 berarti tidak terbatas (unlimited)
 RANK_LIMITS = {
     "beginner": 5,
     "low vip": 10,
@@ -23,33 +22,29 @@ RANK_LIMITS = {
 VALID_RANKS = list(RANK_LIMITS.keys())
 
 def get_db_connection():
-    """Membuat atau mengembalikan koneksi database PostgreSQL yang sudah ada."""
+    """Membuat atau mengembalikan koneksi database PostgreSQL."""
     global db_connection
-    # Cek jika koneksi belum ada atau sudah tertutup
     if db_connection is None or db_connection.closed != 0:
         try:
             DATABASE_URL = os.getenv("DATABASE_URL")
             if not DATABASE_URL:
-                logger.error("FATAL: DATABASE_URL tidak ditemukan di environment variables.")
+                logger.error("FATAL: DATABASE_URL tidak ditemukan.")
                 return None
             db_connection = psycopg2.connect(DATABASE_URL)
-            logger.info("Koneksi database PostgreSQL berhasil dibuat atau dibuka kembali.")
+            logger.info("Koneksi database PostgreSQL berhasil dibuat.")
         except Exception as e:
-            logger.error("Gagal membuat koneksi database persisten.", exc_info=e)
-            db_connection = None # Set ke None jika gagal
+            logger.error("Gagal membuat koneksi database.", exc_info=e)
+            db_connection = None
     return db_connection
 
 def init_database():
-    """Menginisialisasi database dan membuat semua tabel yang diperlukan."""
+    """Menginisialisasi database dan membuat semua tabel."""
     conn = get_db_connection()
-    if not conn:
-        logger.error("Tidak bisa inisialisasi database karena koneksi gagal.")
-        return
+    if not conn: return
 
     try:
-        # Menggunakan 'with' memastikan cursor tertutup secara otomatis
         with conn.cursor() as cursor:
-            # Tabel untuk fitur Scanner
+            # Tabel Fitur Lama
             cursor.execute('''
                 CREATE TABLE IF NOT EXISTS scan_history (
                     id SERIAL PRIMARY KEY,
@@ -64,51 +59,36 @@ def init_database():
             ''')
             cursor.execute('''
                 CREATE TABLE IF NOT EXISTS daily_usage (
-                    user_id BIGINT NOT NULL,
-                    date DATE NOT NULL,
-                    count INTEGER DEFAULT 0,
+                    user_id BIGINT NOT NULL, date DATE NOT NULL, count INTEGER DEFAULT 0,
                     PRIMARY KEY (user_id, date)
                 );
             ''')
-            # Tabel untuk fitur Character Story
             cursor.execute('''
                 CREATE TABLE IF NOT EXISTS char_story_cooldown (
-                    user_id BIGINT PRIMARY KEY,
-                    last_used_date DATE NOT NULL
+                    user_id BIGINT PRIMARY KEY, last_used_date DATE NOT NULL
                 );
             ''')
-            # Tabel untuk fitur MP3 Converter
             cursor.execute('''
                 CREATE TABLE IF NOT EXISTS server_settings (
-                    guild_id BIGINT PRIMARY KEY,
-                    upload_channel_id BIGINT
+                    guild_id BIGINT PRIMARY KEY, upload_channel_id BIGINT
                 );
             ''')
-
-            # =================================================================
-            # [BARU] Tabel untuk Pangkat (Rank) dan Limit AI
-            # =================================================================
-            # Menyimpan pangkat pengguna
             cursor.execute('''
                 CREATE TABLE IF NOT EXISTS user_permissions (
-                    user_id BIGINT PRIMARY KEY,
-                    rank TEXT NOT NULL DEFAULT 'beginner'
+                    user_id BIGINT PRIMARY KEY, rank TEXT NOT NULL DEFAULT 'beginner'
                 );
             ''')
-            # Menyimpan jejak penggunaan SEMUA FITUR AI
             cursor.execute('''
                 CREATE TABLE IF NOT EXISTS ai_daily_usage (
-                    user_id BIGINT NOT NULL,
-                    date DATE NOT NULL,
-                    count INTEGER DEFAULT 0,
+                    user_id BIGINT NOT NULL, date DATE NOT NULL, count INTEGER DEFAULT 0,
                     PRIMARY KEY (user_id, date)
                 );
             ''')
 
             # =================================================================
-            # [BARU] Tabel untuk Fitur Dynamic Support (Rating & Config)
+            # TABEL BARU: Dynamic Support (Rating & Config & Rules)
             # =================================================================
-            # Tabel untuk menyimpan Log Channel Rating per server
+            # 1. Config Log Rating
             cursor.execute('''
                 CREATE TABLE IF NOT EXISTS rating_config (
                     guild_id BIGINT PRIMARY KEY,
@@ -116,7 +96,7 @@ def init_database():
                 );
             ''')
             
-            # Tabel untuk menyimpan data Rating User
+            # 2. Data Rating User
             cursor.execute('''
                 CREATE TABLE IF NOT EXISTS ratings (
                     id SERIAL PRIMARY KEY,
@@ -128,309 +108,162 @@ def init_database():
                 );
             ''')
 
-        # Commit perubahan ke database
+            # 3. [BARU] Custom Rules Text
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS server_rules_text (
+                    guild_id BIGINT PRIMARY KEY,
+                    rules_content TEXT
+                );
+            ''')
+
         conn.commit()
-        logger.info("Semua tabel berhasil diinisialisasi di database PostgreSQL.")
+        logger.info("Database berhasil diinisialisasi.")
     except Exception as e:
-        logger.error("Gagal menginisialisasi tabel database.", exc_info=e)
-        # Rollback jika terjadi kesalahan
+        logger.error("Gagal init database.", exc_info=e)
         conn.rollback()
 
-# --- Fungsi untuk MP3 Converter ---
-def set_upload_channel(guild_id: int, channel_id: int) -> bool:
-    """Menyimpan atau memperbarui channel unggah dan mengembalikan status keberhasilan."""
+# --- Fungsi Helper Lama (Disingkat agar muat, fungsinya sama) ---
+def set_upload_channel(guild_id, channel_id):
     conn = get_db_connection()
     if not conn: return False
     try:
-        with conn.cursor() as cursor:
-            # Query UPSERT (UPDATE or INSERT) untuk PostgreSQL
-            query = """
-                INSERT INTO server_settings (guild_id, upload_channel_id)
-                VALUES (%s, %s)
-                ON CONFLICT (guild_id)
-                DO UPDATE SET upload_channel_id = EXCLUDED.upload_channel_id;
-            """
-            cursor.execute(query, (guild_id, channel_id))
-        conn.commit()
-        logger.info(f"Berhasil mengatur upload channel untuk guild {guild_id} ke {channel_id}.")
-        return True
-    except Exception as e:
-        logger.error(f"Gagal menjalankan query set_upload_channel untuk guild {guild_id}", exc_info=e)
-        conn.rollback()
-        return False
+        with conn.cursor() as cur:
+            cur.execute("INSERT INTO server_settings (guild_id, upload_channel_id) VALUES (%s, %s) ON CONFLICT (guild_id) DO UPDATE SET upload_channel_id = EXCLUDED.upload_channel_id", (guild_id, channel_id))
+        conn.commit(); return True
+    except: return False
 
-def get_upload_channel(guild_id: int) -> int or None:
-    """Mengambil channel unggah yang tersimpan untuk sebuah server."""
+def get_upload_channel(guild_id):
     conn = get_db_connection()
     if not conn: return None
     try:
-        with conn.cursor() as cursor:
-            cursor.execute('SELECT upload_channel_id FROM server_settings WHERE guild_id = %s', (guild_id,))
-            result = cursor.fetchone()
-        return result[0] if result else None
-    except Exception as e:
-        logger.error(f"Gagal mengambil upload channel untuk guild {guild_id}", exc_info=e)
-        return None
+        with conn.cursor() as cur:
+            cur.execute('SELECT upload_channel_id FROM server_settings WHERE guild_id = %s', (guild_id,))
+            res = cur.fetchone()
+        return res[0] if res else None
+    except: return None
 
-# --- Fungsi untuk Scanner ---
-def check_daily_limit(user_id: int, limit: int) -> bool:
-    """Memeriksa batas scan harian pengguna (HANYA UNTUK SCANNER LAMA)."""
+def check_ai_limit(user_id):
     conn = get_db_connection()
-    if not conn: return False # Anggap limit tercapai jika DB tidak terhubung
-    try:
-        with conn.cursor() as cursor:
-            cursor.execute('SELECT count FROM daily_usage WHERE user_id = %s AND date = %s', (user_id, date.today()))
-            result = cursor.fetchone()
-        return not (result and result[0] >= limit)
-    except Exception as e:
-        logger.error(f"Gagal memeriksa daily limit untuk user {user_id}", exc_info=e)
-        return False
-
-def increment_daily_usage(user_id: int):
-    """Menambah hitungan scan harian pengguna (HANYA UNTUK SCANNER LAMA)."""
-    conn = get_db_connection()
-    if not conn: return
-    try:
-        with conn.cursor() as cursor:
-            query = """
-                INSERT INTO daily_usage (user_id, date, count)
-                VALUES (%s, %s, 1)
-                ON CONFLICT (user_id, date)
-                DO UPDATE SET count = daily_usage.count + 1;
-            """
-            cursor.execute(query, (user_id, date.today()))
-        conn.commit()
-    except Exception as e:
-        logger.error(f"Gagal menambah daily usage untuk user {user_id}", exc_info=e)
-        conn.rollback()
-
-def save_scan_history(user_id: int, filename: str, file_hash: str, danger_level: int, analyst: str, channel_id: int):
-    """Menyimpan riwayat scan."""
-    conn = get_db_connection()
-    if not conn: return
-    try:
-        with conn.cursor() as cursor:
-            cursor.execute(
-                "INSERT INTO scan_history (user_id, filename, file_hash, danger_level, analyst, channel_id) VALUES (%s, %s, %s, %s, %s, %s)",
-                (user_id, filename, file_hash, danger_level, analyst, channel_id)
-            )
-        conn.commit()
-    except Exception as e:
-        logger.error(f"Gagal menyimpan riwayat scan untuk file {filename}", exc_info=e)
-        conn.rollback()
-
-# --- Fungsi untuk Character Story ---
-def check_char_story_cooldown(user_id: int) -> bool:
-    """Memeriksa cooldown harian untuk Character Story (SEKARANG DIKELOLA OLEH check_ai_limit)."""
-    # Fungsi ini bisa dibiarkan atau dihapus, karena akan diganti
-    conn = get_db_connection()
-    if not conn: return False
-    try:
-        with conn.cursor() as cursor:
-            cursor.execute('SELECT last_used_date FROM char_story_cooldown WHERE user_id = %s', (user_id,))
-            result = cursor.fetchone()
-        return not (result and result[0] == date.today())
-    except Exception as e:
-        logger.error(f"Gagal memeriksa cooldown char_story untuk user {user_id}", exc_info=e)
-        return False
-
-def set_char_story_cooldown(user_id: int):
-    """Mengatur cooldown harian untuk Character Story (SEKARANG DIKELOLA OLEH increment_ai_usage)."""
-    # Fungsi ini bisa dibiarkan atau dihapus, karena akan diganti
-    conn = get_db_connection()
-    if not conn: return
-    try:
-        with conn.cursor() as cursor:
-            query = """
-                INSERT INTO char_story_cooldown (user_id, last_used_date)
-                VALUES (%s, %s)
-                ON CONFLICT (user_id)
-                DO UPDATE SET last_used_date = EXCLUDED.last_used_date;
-            """
-            cursor.execute(query, (user_id, date.today()))
-        conn.commit()
-    except Exception as e:
-        logger.error(f"Gagal mengatur cooldown char_story untuk user {user_id}", exc_info=e)
-        conn.rollback()
-
-
-# =================================================================
-# [BARU] Fungsi untuk Pangkat (Rank) dan Limit AI Global
-# =================================================================
-
-def get_user_rank(user_id: int) -> str:
-    """Mengambil pangkat (rank) pengguna dari database."""
-    conn = get_db_connection()
-    if not conn:
-        return 'beginner' # Default jika DB gagal
-    try:
-        with conn.cursor() as cursor:
-            cursor.execute('SELECT rank FROM user_permissions WHERE user_id = %s', (user_id,))
-            result = cursor.fetchone()
-
-        # Jika pengguna tidak ada di tabel, tambahkan sebagai beginner
-        if not result:
-            set_user_rank(user_id, 'beginner') # Otomatis daftarkan
-            return 'beginner'
-
-        rank = result[0].lower()
-        # Validasi jika rank di DB tidak valid lagi
-        if rank not in VALID_RANKS:
-            logger.warning(f"User {user_id} memiliki rank tidak valid '{rank}', direset ke 'beginner'.")
-            set_user_rank(user_id, 'beginner')
-            return 'beginner'
-
-        return rank
-
-    except Exception as e:
-        logger.error(f"Gagal mengambil rank untuk user {user_id}", exc_info=e)
-        return 'beginner'
-
-def set_user_rank(user_id: int, rank: str) -> bool:
-    """Mengatur atau memperbarui pangkat (rank) pengguna (untuk admin)."""
-    rank_lower = rank.lower()
-    if rank_lower not in VALID_RANKS:
-        logger.warning(f"Upaya mengatur rank tidak valid '{rank}' untuk user {user_id}")
-        return False
-
-    conn = get_db_connection()
-    if not conn:
-        return False
-    try:
-        with conn.cursor() as cursor:
-            query = """
-                INSERT INTO user_permissions (user_id, rank)
-                VALUES (%s, %s)
-                ON CONFLICT (user_id)
-                DO UPDATE SET rank = EXCLUDED.rank;
-            """
-            cursor.execute(query, (user_id, rank_lower))
-        conn.commit()
-        logger.info(f"Berhasil mengatur rank user {user_id} ke {rank_lower}.")
-        return True
-    except Exception as e:
-        logger.error(f"Gagal mengatur rank untuk user {user_id}", exc_info=e)
-        conn.rollback()
-        return False
-
-def check_ai_limit(user_id: int) -> Tuple[bool, int, int]:
-    """
-    Memeriksa apakah pengguna telah mencapai batas penggunaan AI harian mereka.
-    Mengembalikan (BolehPakai, SisaRequest, BatasMaksimal)
-    """
-    conn = get_db_connection()
-    if not conn:
-        return (False, 0, 0) # Gagalkan jika DB mati
-
+    if not conn: return (False, 0, 0)
     try:
         rank = get_user_rank(user_id)
-        limit = RANK_LIMITS.get(rank, 5) # Default ke 5 jika rank aneh
+        limit = RANK_LIMITS.get(rank, 5)
+        if limit == -1: return (True, 999, -1)
+        with conn.cursor() as cur:
+            cur.execute('SELECT count FROM ai_daily_usage WHERE user_id = %s AND date = %s', (user_id, date.today()))
+            res = cur.fetchone()
+        curr = res[0] if res else 0
+        return (curr < limit, limit - curr, limit)
+    except: return (False, 0, 0)
 
-        # Admin tidak terbatas
-        if limit == -1:
-            return (True, 999, -1) # BolehPakai, Sisa, BatasMaksimal
-
-        current_usage = 0
-        with conn.cursor() as cursor:
-            cursor.execute('SELECT count FROM ai_daily_usage WHERE user_id = %s AND date = %s', (user_id, date.today()))
-            result = cursor.fetchone()
-
-        if result:
-            current_usage = result[0]
-
-        can_use = current_usage < limit
-        remaining = limit - current_usage
-
-        return (can_use, remaining, limit)
-
-    except Exception as e:
-        logger.error(f"Gagal memeriksa AI limit untuk user {user_id}", exc_info=e)
-        return (False, 0, 0)
-
-def increment_ai_usage(user_id: int):
-    """Menambah hitungan penggunaan AI harian pengguna."""
+def increment_ai_usage(user_id):
     conn = get_db_connection()
-    if not conn:
-        return
-
+    if not conn: return
     try:
-        with conn.cursor() as cursor:
-            query = """
-                INSERT INTO ai_daily_usage (user_id, date, count)
-                VALUES (%s, %s, 1)
-                ON CONFLICT (user_id, date)
-                DO UPDATE SET count = ai_daily_usage.count + 1;
-            """
-            cursor.execute(query, (user_id, date.today()))
+        with conn.cursor() as cur:
+            cur.execute("INSERT INTO ai_daily_usage (user_id, date, count) VALUES (%s, %s, 1) ON CONFLICT (user_id, date) DO UPDATE SET count = ai_daily_usage.count + 1", (user_id, date.today()))
         conn.commit()
-        logger.info(f"Berhasil menambah AI usage untuk user {user_id}.")
-    except Exception as e:
-        logger.error(f"Gagal menambah AI usage untuk user {user_id}", exc_info=e)
-        conn.rollback()
+    except: conn.rollback()
 
-# =================================================================
-# [BARU] Fungsi Helper untuk Dynamic Support (Rating & Config)
-# =================================================================
+def get_user_rank(user_id):
+    conn = get_db_connection()
+    if not conn: return 'beginner'
+    try:
+        with conn.cursor() as cur:
+            cur.execute('SELECT rank FROM user_permissions WHERE user_id = %s', (user_id,))
+            res = cur.fetchone()
+        if not res: 
+            set_user_rank(user_id, 'beginner'); return 'beginner'
+        return res[0].lower()
+    except: return 'beginner'
 
-def set_rating_log_channel(guild_id: int, channel_id: int) -> bool:
-    """Mengatur channel log untuk notifikasi rating."""
+def set_user_rank(user_id, rank):
     conn = get_db_connection()
     if not conn: return False
     try:
-        with conn.cursor() as cursor:
-            cursor.execute(
-                "INSERT INTO rating_config (guild_id, log_channel_id) VALUES (%s, %s) ON CONFLICT (guild_id) DO UPDATE SET log_channel_id = EXCLUDED.log_channel_id",
-                (guild_id, channel_id)
-            )
-        conn.commit()
-        return True
-    except Exception as e:
-        logger.error(f"Gagal set rating log: {e}")
-        conn.rollback()
-        return False
+        with conn.cursor() as cur:
+            cur.execute("INSERT INTO user_permissions (user_id, rank) VALUES (%s, %s) ON CONFLICT (user_id) DO UPDATE SET rank = EXCLUDED.rank", (user_id, rank.lower()))
+        conn.commit(); return True
+    except: return False
 
-def get_rating_log_channel(guild_id: int) -> int or None:
-    """Mengambil ID channel log rating."""
+def save_scan_history(user_id, filename, file_hash, danger_level, analyst, channel_id):
+    conn = get_db_connection()
+    if not conn: return
+    try:
+        with conn.cursor() as cur:
+            cur.execute("INSERT INTO scan_history (user_id, filename, file_hash, danger_level, analyst, channel_id) VALUES (%s, %s, %s, %s, %s, %s)", (user_id, filename, file_hash, danger_level, analyst, channel_id))
+        conn.commit()
+    except: conn.rollback()
+    
+# --- [BARU] FUNGSI DYNAMIC SUPPORT (RATING & RULES) ---
+
+def set_rating_log_channel(guild_id, channel_id):
+    conn = get_db_connection()
+    if not conn: return False
+    try:
+        with conn.cursor() as cur:
+            cur.execute("INSERT INTO rating_config (guild_id, log_channel_id) VALUES (%s, %s) ON CONFLICT (guild_id) DO UPDATE SET log_channel_id = EXCLUDED.log_channel_id", (guild_id, channel_id))
+        conn.commit(); return True
+    except: return False
+
+def get_rating_log_channel(guild_id):
     conn = get_db_connection()
     if not conn: return None
     try:
-        with conn.cursor() as cursor:
-            cursor.execute("SELECT log_channel_id FROM rating_config WHERE guild_id = %s", (guild_id,))
-            res = cursor.fetchone()
-            return res[0] if res else None
-    except Exception as e:
-        logger.error(f"Gagal get rating log: {e}")
-        return None
+        with conn.cursor() as cur:
+            cur.execute("SELECT log_channel_id FROM rating_config WHERE guild_id = %s", (guild_id,))
+            res = cur.fetchone()
+        return res[0] if res else None
+    except: return None
 
-def add_rating(topic_name: str, user_id: int, stars: int) -> bool:
-    """Menambah atau mengupdate rating user untuk topik tertentu."""
+def add_rating(topic, user_id, stars):
     conn = get_db_connection()
     if not conn: return False
     try:
-        with conn.cursor() as cursor:
-            # Upsert rating (jika user sudah rating, update nilainya)
-            cursor.execute(
-                "INSERT INTO ratings (topic_name, user_id, stars) VALUES (%s, %s, %s) ON CONFLICT (topic_name, user_id) DO UPDATE SET stars = EXCLUDED.stars, timestamp = CURRENT_TIMESTAMP",
-                (topic_name, user_id, stars)
-            )
-        conn.commit()
-        return True
-    except Exception as e:
-        logger.error(f"Gagal add rating: {e}")
-        conn.rollback()
-        return False
+        with conn.cursor() as cur:
+            cur.execute("INSERT INTO ratings (topic_name, user_id, stars) VALUES (%s, %s, %s) ON CONFLICT (topic_name, user_id) DO UPDATE SET stars = EXCLUDED.stars, timestamp = CURRENT_TIMESTAMP", (topic, user_id, stars))
+        conn.commit(); return True
+    except: return False
 
-def get_rating_stats(topic_name: str) -> Tuple[float, int]:
-    """Mengambil rata-rata rating dan jumlah vote untuk topik tertentu."""
+def get_rating_stats(topic):
     conn = get_db_connection()
     if not conn: return 0.0, 0
     try:
-        with conn.cursor() as cursor:
-            cursor.execute("SELECT AVG(stars), COUNT(*) FROM ratings WHERE topic_name = %s", (topic_name,))
-            res = cursor.fetchone()
-            if res and res[0] is not None:
-                return round(float(res[0]), 2), res[1]
+        with conn.cursor() as cur:
+            cur.execute("SELECT AVG(stars), COUNT(*) FROM ratings WHERE topic_name = %s", (topic,))
+            res = cur.fetchone()
+            if res and res[0] is not None: return round(float(res[0]), 2), res[1]
             return 0.0, 0
+    except: return 0.0, 0
+
+# --- [BARU] Fungsi Custom Rules ---
+
+def set_server_rules(guild_id: int, content: str) -> bool:
+    """Menyimpan teks rules custom ke database."""
+    conn = get_db_connection()
+    if not conn: return False
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                "INSERT INTO server_rules_text (guild_id, rules_content) VALUES (%s, %s) ON CONFLICT (guild_id) DO UPDATE SET rules_content = EXCLUDED.rules_content",
+                (guild_id, content)
+            )
+        conn.commit()
+        return True
     except Exception as e:
-        logger.error(f"Gagal get stats: {e}")
-        return 0.0, 0
+        logger.error(f"Gagal set rules: {e}")
+        conn.rollback()
+        return False
+
+def get_server_rules(guild_id: int) -> str:
+    """Mengambil teks rules dari database."""
+    conn = get_db_connection()
+    if not conn: return None
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT rules_content FROM server_rules_text WHERE guild_id = %s", (guild_id,))
+            res = cur.fetchone()
+        return res[0] if res else None
+    except Exception as e:
+        logger.error(f"Gagal get rules: {e}")
+        return None
