@@ -44,77 +44,36 @@ def init_database():
 
     try:
         with conn.cursor() as cursor:
-            # Tabel Fitur Lama
-            cursor.execute('''
-                CREATE TABLE IF NOT EXISTS scan_history (
-                    id SERIAL PRIMARY KEY,
-                    user_id BIGINT NOT NULL,
-                    filename TEXT NOT NULL,
-                    file_hash TEXT,
-                    danger_level INTEGER NOT NULL,
-                    analyst TEXT,
-                    timestamp TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
-                    channel_id BIGINT
-                );
-            ''')
-            cursor.execute('''
-                CREATE TABLE IF NOT EXISTS daily_usage (
-                    user_id BIGINT NOT NULL, date DATE NOT NULL, count INTEGER DEFAULT 0,
-                    PRIMARY KEY (user_id, date)
-                );
-            ''')
-            cursor.execute('''
-                CREATE TABLE IF NOT EXISTS char_story_cooldown (
-                    user_id BIGINT PRIMARY KEY, last_used_date DATE NOT NULL
-                );
-            ''')
-            cursor.execute('''
-                CREATE TABLE IF NOT EXISTS server_settings (
-                    guild_id BIGINT PRIMARY KEY, upload_channel_id BIGINT
-                );
-            ''')
-            cursor.execute('''
-                CREATE TABLE IF NOT EXISTS user_permissions (
-                    user_id BIGINT PRIMARY KEY, rank TEXT NOT NULL DEFAULT 'beginner'
-                );
-            ''')
-            cursor.execute('''
-                CREATE TABLE IF NOT EXISTS ai_daily_usage (
-                    user_id BIGINT NOT NULL, date DATE NOT NULL, count INTEGER DEFAULT 0,
-                    PRIMARY KEY (user_id, date)
-                );
-            ''')
+            # --- Tabel Fitur Lama ---
+            cursor.execute('''CREATE TABLE IF NOT EXISTS scan_history (id SERIAL PRIMARY KEY, user_id BIGINT NOT NULL, filename TEXT NOT NULL, file_hash TEXT, danger_level INTEGER NOT NULL, analyst TEXT, timestamp TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP, channel_id BIGINT);''')
+            cursor.execute('''CREATE TABLE IF NOT EXISTS daily_usage (user_id BIGINT NOT NULL, date DATE NOT NULL, count INTEGER DEFAULT 0, PRIMARY KEY (user_id, date));''')
+            cursor.execute('''CREATE TABLE IF NOT EXISTS char_story_cooldown (user_id BIGINT PRIMARY KEY, last_used_date DATE NOT NULL);''')
+            cursor.execute('''CREATE TABLE IF NOT EXISTS server_settings (guild_id BIGINT PRIMARY KEY, upload_channel_id BIGINT);''')
+            cursor.execute('''CREATE TABLE IF NOT EXISTS user_permissions (user_id BIGINT PRIMARY KEY, rank TEXT NOT NULL DEFAULT 'beginner');''')
+            cursor.execute('''CREATE TABLE IF NOT EXISTS ai_daily_usage (user_id BIGINT NOT NULL, date DATE NOT NULL, count INTEGER DEFAULT 0, PRIMARY KEY (user_id, date));''')
 
-            # =================================================================
-            # TABEL BARU: Dynamic Support (Rating & Config & Rules)
-            # =================================================================
-            # 1. Config Log Rating
-            cursor.execute('''
-                CREATE TABLE IF NOT EXISTS rating_config (
-                    guild_id BIGINT PRIMARY KEY,
-                    log_channel_id BIGINT
-                );
-            ''')
+            # --- Tabel Dynamic Support (Rating & Config & Rules) ---
+            cursor.execute('''CREATE TABLE IF NOT EXISTS rating_config (guild_id BIGINT PRIMARY KEY, log_channel_id BIGINT);''')
+            cursor.execute('''CREATE TABLE IF NOT EXISTS server_rules_text (guild_id BIGINT PRIMARY KEY, rules_content TEXT);''')
             
-            # 2. Data Rating User
+            # Tabel Rating (Update: Tambah kolom comment jika belum ada)
             cursor.execute('''
                 CREATE TABLE IF NOT EXISTS ratings (
                     id SERIAL PRIMARY KEY,
                     topic_name TEXT NOT NULL,
                     user_id BIGINT NOT NULL,
                     stars INTEGER NOT NULL,
+                    comment TEXT,
                     timestamp TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
                     CONSTRAINT unique_user_topic UNIQUE (topic_name, user_id)
                 );
             ''')
-
-            # 3. [BARU] Custom Rules Text
-            cursor.execute('''
-                CREATE TABLE IF NOT EXISTS server_rules_text (
-                    guild_id BIGINT PRIMARY KEY,
-                    rules_content TEXT
-                );
-            ''')
+            
+            # Migrasi otomatis: Tambahkan kolom comment jika tabel rating lama belum punya
+            try:
+                cursor.execute("ALTER TABLE ratings ADD COLUMN IF NOT EXISTS comment TEXT;")
+            except Exception as e:
+                logger.info(f"Kolom comment sudah ada atau error skip: {e}")
 
         conn.commit()
         logger.info("Database berhasil diinisialisasi.")
@@ -122,7 +81,7 @@ def init_database():
         logger.error("Gagal init database.", exc_info=e)
         conn.rollback()
 
-# --- Fungsi Helper Lama (Disingkat agar muat, fungsinya sama) ---
+# --- Helper Functions (Ringkas) ---
 def set_upload_channel(guild_id, channel_id):
     conn = get_db_connection()
     if not conn: return False
@@ -195,7 +154,7 @@ def save_scan_history(user_id, filename, file_hash, danger_level, analyst, chann
         conn.commit()
     except: conn.rollback()
     
-# --- [BARU] FUNGSI DYNAMIC SUPPORT (RATING & RULES) ---
+# --- FUNGSI DYNAMIC SUPPORT (RATING, RULES, CONFIG) ---
 
 def set_rating_log_channel(guild_id, channel_id):
     conn = get_db_connection()
@@ -216,14 +175,22 @@ def get_rating_log_channel(guild_id):
         return res[0] if res else None
     except: return None
 
-def add_rating(topic, user_id, stars):
+# Update: Support comment
+def add_rating(topic, user_id, stars, comment=None):
     conn = get_db_connection()
     if not conn: return False
     try:
         with conn.cursor() as cur:
-            cur.execute("INSERT INTO ratings (topic_name, user_id, stars) VALUES (%s, %s, %s) ON CONFLICT (topic_name, user_id) DO UPDATE SET stars = EXCLUDED.stars, timestamp = CURRENT_TIMESTAMP", (topic, user_id, stars))
+            cur.execute("""
+                INSERT INTO ratings (topic_name, user_id, stars, comment) 
+                VALUES (%s, %s, %s, %s) 
+                ON CONFLICT (topic_name, user_id) 
+                DO UPDATE SET stars = EXCLUDED.stars, comment = EXCLUDED.comment, timestamp = CURRENT_TIMESTAMP
+            """, (topic, user_id, stars, comment))
         conn.commit(); return True
-    except: return False
+    except Exception as e:
+        logger.error(f"DB Error add_rating: {e}")
+        conn.rollback(); return False
 
 def get_rating_stats(topic):
     conn = get_db_connection()
@@ -236,27 +203,16 @@ def get_rating_stats(topic):
             return 0.0, 0
     except: return 0.0, 0
 
-# --- [BARU] Fungsi Custom Rules ---
-
 def set_server_rules(guild_id: int, content: str) -> bool:
-    """Menyimpan teks rules custom ke database."""
     conn = get_db_connection()
     if not conn: return False
     try:
         with conn.cursor() as cur:
-            cur.execute(
-                "INSERT INTO server_rules_text (guild_id, rules_content) VALUES (%s, %s) ON CONFLICT (guild_id) DO UPDATE SET rules_content = EXCLUDED.rules_content",
-                (guild_id, content)
-            )
-        conn.commit()
-        return True
-    except Exception as e:
-        logger.error(f"Gagal set rules: {e}")
-        conn.rollback()
-        return False
+            cur.execute("INSERT INTO server_rules_text (guild_id, rules_content) VALUES (%s, %s) ON CONFLICT (guild_id) DO UPDATE SET rules_content = EXCLUDED.rules_content", (guild_id, content))
+        conn.commit(); return True
+    except: conn.rollback(); return False
 
 def get_server_rules(guild_id: int) -> str:
-    """Mengambil teks rules dari database."""
     conn = get_db_connection()
     if not conn: return None
     try:
@@ -264,6 +220,4 @@ def get_server_rules(guild_id: int) -> str:
             cur.execute("SELECT rules_content FROM server_rules_text WHERE guild_id = %s", (guild_id,))
             res = cur.fetchone()
         return res[0] if res else None
-    except Exception as e:
-        logger.error(f"Gagal get rules: {e}")
-        return None
+    except: return None
