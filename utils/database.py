@@ -9,7 +9,7 @@ logger = logging.getLogger(__name__)
 db_connection = None
 
 # =================================================================
-# Definisikan Batas Pangkat (Rank) - PENTING UNTUK SCANNER/AI
+# Definisikan Batas Pangkat (Rank)
 # =================================================================
 RANK_LIMITS = {
     "beginner": 5,
@@ -21,24 +21,30 @@ RANK_LIMITS = {
 VALID_RANKS = list(RANK_LIMITS.keys())
 
 def get_db_connection():
-    """Membuat atau mengembalikan koneksi database PostgreSQL."""
+    """Membuat atau mengembalikan koneksi database PostgreSQL dengan error handling lebih baik."""
     global db_connection
+    # Cek jika koneksi None atau sudah tertutup (closed != 0)
     if db_connection is None or db_connection.closed != 0:
         try:
             DATABASE_URL = os.getenv("DATABASE_URL")
             if not DATABASE_URL:
-                logger.error("FATAL: DATABASE_URL tidak ditemukan.")
+                logger.critical("❌ FATAL: DATABASE_URL tidak ditemukan di .env atau environment variables!")
                 return None
+            
+            # Coba connect
             db_connection = psycopg2.connect(DATABASE_URL)
+            # logger.info("✅ Berhasil terhubung ke database PostgreSQL.") 
         except Exception as e:
-            logger.error("Gagal koneksi database.", exc_info=e)
+            logger.error(f"❌ Gagal koneksi database: {e}")
             db_connection = None
     return db_connection
 
 def init_database():
     """Menginisialisasi SEMUA tabel (Scanner + Rating)."""
     conn = get_db_connection()
-    if not conn: return
+    if not conn:
+        logger.error("❌ Init database dibatalkan: Tidak ada koneksi ke database.")
+        return
 
     try:
         with conn.cursor() as cursor:
@@ -66,9 +72,9 @@ def init_database():
             ''')
 
         conn.commit()
-        logger.info("Database lengkap (Scanner + Rating) berhasil diinisialisasi.")
+        logger.info("✅ Database lengkap (Scanner + Rating) berhasil diinisialisasi/diupdate.")
     except Exception as e:
-        logger.error("Gagal init database.", exc_info=e)
+        logger.error(f"❌ Gagal init database (SQL Error): {e}")
         conn.rollback()
 
 # =================================================================
@@ -81,8 +87,12 @@ def set_upload_channel(guild_id, channel_id):
     try:
         with conn.cursor() as cur:
             cur.execute("INSERT INTO server_settings (guild_id, upload_channel_id) VALUES (%s, %s) ON CONFLICT (guild_id) DO UPDATE SET upload_channel_id = EXCLUDED.upload_channel_id", (guild_id, channel_id))
-        conn.commit(); return True
-    except: return False
+        conn.commit()
+        return True
+    except Exception as e:
+        logger.error(f"Gagal set_upload_channel: {e}")
+        conn.rollback()
+        return False
 
 def get_upload_channel(guild_id):
     conn = get_db_connection()
@@ -92,7 +102,9 @@ def get_upload_channel(guild_id):
             cur.execute('SELECT upload_channel_id FROM server_settings WHERE guild_id = %s', (guild_id,))
             res = cur.fetchone()
         return res[0] if res else None
-    except: return None
+    except Exception as e:
+        logger.error(f"Gagal get_upload_channel: {e}")
+        return None
 
 def check_daily_limit(user_id, limit):
     conn = get_db_connection()
@@ -102,7 +114,9 @@ def check_daily_limit(user_id, limit):
             cur.execute('SELECT count FROM daily_usage WHERE user_id = %s AND date = %s', (user_id, date.today()))
             res = cur.fetchone()
         return not (res and res[0] >= limit)
-    except: return False
+    except Exception as e:
+        logger.error(f"Gagal check_daily_limit: {e}")
+        return False
 
 def increment_daily_usage(user_id):
     conn = get_db_connection()
@@ -111,7 +125,9 @@ def increment_daily_usage(user_id):
         with conn.cursor() as cur:
             cur.execute("INSERT INTO daily_usage (user_id, date, count) VALUES (%s, %s, 1) ON CONFLICT (user_id, date) DO UPDATE SET count = daily_usage.count + 1", (user_id, date.today()))
         conn.commit()
-    except: conn.rollback()
+    except Exception as e:
+        logger.error(f"Gagal increment_daily_usage: {e}")
+        conn.rollback()
 
 def save_scan_history(user_id, filename, file_hash, danger_level, analyst, channel_id):
     conn = get_db_connection()
@@ -120,7 +136,9 @@ def save_scan_history(user_id, filename, file_hash, danger_level, analyst, chann
         with conn.cursor() as cur:
             cur.execute("INSERT INTO scan_history (user_id, filename, file_hash, danger_level, analyst, channel_id) VALUES (%s, %s, %s, %s, %s, %s)", (user_id, filename, file_hash, danger_level, analyst, channel_id))
         conn.commit()
-    except: conn.rollback()
+    except Exception as e:
+        logger.error(f"Gagal save_scan_history: {e}")
+        conn.rollback()
 
 def get_user_rank(user_id):
     conn = get_db_connection()
@@ -130,9 +148,12 @@ def get_user_rank(user_id):
             cur.execute('SELECT rank FROM user_permissions WHERE user_id = %s', (user_id,))
             res = cur.fetchone()
         if not res: 
-            set_user_rank(user_id, 'beginner'); return 'beginner'
+            set_user_rank(user_id, 'beginner')
+            return 'beginner'
         return res[0].lower()
-    except: return 'beginner'
+    except Exception as e:
+        logger.error(f"Gagal get_user_rank: {e}")
+        return 'beginner'
 
 def set_user_rank(user_id, rank):
     conn = get_db_connection()
@@ -140,8 +161,12 @@ def set_user_rank(user_id, rank):
     try:
         with conn.cursor() as cur:
             cur.execute("INSERT INTO user_permissions (user_id, rank) VALUES (%s, %s) ON CONFLICT (user_id) DO UPDATE SET rank = EXCLUDED.rank", (user_id, rank.lower()))
-        conn.commit(); return True
-    except: return False
+        conn.commit()
+        return True
+    except Exception as e:
+        logger.error(f"Gagal set_user_rank: {e}")
+        conn.rollback()
+        return False
 
 def check_ai_limit(user_id):
     conn = get_db_connection()
@@ -155,7 +180,9 @@ def check_ai_limit(user_id):
             res = cur.fetchone()
         curr = res[0] if res else 0
         return (curr < limit, limit - curr, limit)
-    except: return (False, 0, 0)
+    except Exception as e:
+        logger.error(f"Gagal check_ai_limit: {e}")
+        return (False, 0, 0)
 
 def increment_ai_usage(user_id):
     conn = get_db_connection()
@@ -164,7 +191,9 @@ def increment_ai_usage(user_id):
         with conn.cursor() as cur:
             cur.execute("INSERT INTO ai_daily_usage (user_id, date, count) VALUES (%s, %s, 1) ON CONFLICT (user_id, date) DO UPDATE SET count = ai_daily_usage.count + 1", (user_id, date.today()))
         conn.commit()
-    except: conn.rollback()
+    except Exception as e:
+        logger.error(f"Gagal increment_ai_usage: {e}")
+        conn.rollback()
 
 # =================================================================
 # FUNGSI RATING (Satu-satunya fitur Dynamic yang tersisa)
@@ -176,8 +205,12 @@ def set_rating_log_channel(guild_id, channel_id):
     try:
         with conn.cursor() as cur:
             cur.execute("INSERT INTO rating_config (guild_id, log_channel_id) VALUES (%s, %s) ON CONFLICT (guild_id) DO UPDATE SET log_channel_id = EXCLUDED.log_channel_id", (guild_id, channel_id))
-        conn.commit(); return True
-    except: return False
+        conn.commit()
+        return True
+    except Exception as e:
+        logger.error(f"❌ Gagal set_rating_log_channel: {e}") # Log error spesifik
+        conn.rollback()
+        return False
 
 def get_rating_log_channel(guild_id):
     conn = get_db_connection()
@@ -187,7 +220,9 @@ def get_rating_log_channel(guild_id):
             cur.execute("SELECT log_channel_id FROM rating_config WHERE guild_id = %s", (guild_id,))
             res = cur.fetchone()
         return res[0] if res else None
-    except: return None
+    except Exception as e:
+        logger.error(f"❌ Gagal get_rating_log_channel: {e}")
+        return None
 
 def add_rating(user_id, topic, stars, comment):
     conn = get_db_connection()
@@ -203,7 +238,7 @@ def add_rating(user_id, topic, stars, comment):
         conn.commit()
         return True
     except Exception as e:
-        logger.error(f"Gagal add rating: {e}")
+        logger.error(f"❌ Gagal add_rating (SQL Error): {e}") # Ini akan muncul di log kamu
         conn.rollback()
         return False
 
@@ -217,4 +252,6 @@ def get_rating_stats(topic):
             if res and res[0] is not None:
                 return round(float(res[0]), 2), res[1]
             return 0.0, 0
-    except: return 0.0, 0
+    except Exception as e:
+        logger.error(f"❌ Gagal get_rating_stats: {e}")
+        return 0.0, 0
