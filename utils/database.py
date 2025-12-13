@@ -1,7 +1,7 @@
 import os
 import psycopg2
 import logging
-from datetime import date, datetime 
+from datetime import date 
 
 logger = logging.getLogger(__name__)
 
@@ -9,7 +9,7 @@ logger = logging.getLogger(__name__)
 db_connection = None
 
 # =================================================================
-# Definisikan Batas Pangkat (Rank) - UNTUK FITUR AI / SCANNER
+# Definisikan Batas Pangkat (Rank) - PENTING UNTUK SCANNER/AI
 # =================================================================
 RANK_LIMITS = {
     "beginner": 5,
@@ -36,13 +36,13 @@ def get_db_connection():
     return db_connection
 
 def init_database():
-    """Menginisialisasi SEMUA tabel (Lama & Baru)."""
+    """Menginisialisasi SEMUA tabel (Scanner + Rating)."""
     conn = get_db_connection()
     if not conn: return
 
     try:
         with conn.cursor() as cursor:
-            # --- 1. Tabel Fitur Lama (Scanner, Converter, AI) ---
+            # --- 1. TABEL BAWAAN (Scanner, AI, dll) ---
             cursor.execute('''CREATE TABLE IF NOT EXISTS scan_history (id SERIAL PRIMARY KEY, user_id BIGINT NOT NULL, filename TEXT NOT NULL, file_hash TEXT, danger_level INTEGER NOT NULL, analyst TEXT, timestamp TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP, channel_id BIGINT);''')
             cursor.execute('''CREATE TABLE IF NOT EXISTS daily_usage (user_id BIGINT NOT NULL, date DATE NOT NULL, count INTEGER DEFAULT 0, PRIMARY KEY (user_id, date));''')
             cursor.execute('''CREATE TABLE IF NOT EXISTS char_story_cooldown (user_id BIGINT PRIMARY KEY, last_used_date DATE NOT NULL);''')
@@ -50,11 +50,10 @@ def init_database():
             cursor.execute('''CREATE TABLE IF NOT EXISTS user_permissions (user_id BIGINT PRIMARY KEY, rank TEXT NOT NULL DEFAULT 'beginner');''')
             cursor.execute('''CREATE TABLE IF NOT EXISTS ai_daily_usage (user_id BIGINT NOT NULL, date DATE NOT NULL, count INTEGER DEFAULT 0, PRIMARY KEY (user_id, date));''')
 
-            # --- 2. Tabel Fitur Baru (Rating & Support) ---
-            # Config Log Channel
+            # --- 2. TABEL RATING (Fitur Baru) ---
             cursor.execute('''CREATE TABLE IF NOT EXISTS rating_config (guild_id BIGINT PRIMARY KEY, log_channel_id BIGINT);''')
             
-            # Data Rating (Update: Support Comment & Update Ulang)
+            # Tabel Ratings dengan kolom Comment
             cursor.execute('''
                 CREATE TABLE IF NOT EXISTS ratings (
                     user_id BIGINT NOT NULL,
@@ -65,18 +64,15 @@ def init_database():
                     PRIMARY KEY (user_id, topic)
                 );
             ''')
-            
-            # Rules Text (Optional, buat jaga-jaga)
-            cursor.execute('''CREATE TABLE IF NOT EXISTS server_rules_text (guild_id BIGINT PRIMARY KEY, rules_content TEXT);''')
 
         conn.commit()
-        logger.info("Database lengkap berhasil diinisialisasi.")
+        logger.info("Database lengkap (Scanner + Rating) berhasil diinisialisasi.")
     except Exception as e:
         logger.error("Gagal init database.", exc_info=e)
         conn.rollback()
 
 # =================================================================
-# FUNGSI FITUR LAMA (Scanner, MP3, AI)
+# FUNGSI PENDUKUNG SCANNER & AI
 # =================================================================
 
 def set_upload_channel(guild_id, channel_id):
@@ -171,7 +167,7 @@ def increment_ai_usage(user_id):
     except: conn.rollback()
 
 # =================================================================
-# FUNGSI FITUR BARU (Rating & Dynamic Support)
+# FUNGSI RATING (Satu-satunya fitur Dynamic yang tersisa)
 # =================================================================
 
 def set_rating_log_channel(guild_id, channel_id):
@@ -198,7 +194,6 @@ def add_rating(user_id, topic, stars, comment):
     if not conn: return False
     try:
         with conn.cursor() as cur:
-            # UPSERT Logic (Insert or Update)
             cur.execute("""
                 INSERT INTO ratings (user_id, topic, stars, comment, created_at)
                 VALUES (%s, %s, %s, %s, CURRENT_TIMESTAMP)
@@ -223,22 +218,3 @@ def get_rating_stats(topic):
                 return round(float(res[0]), 2), res[1]
             return 0.0, 0
     except: return 0.0, 0
-
-def set_server_rules(guild_id, content):
-    conn = get_db_connection()
-    if not conn: return False
-    try:
-        with conn.cursor() as cur:
-            cur.execute("INSERT INTO server_rules_text (guild_id, rules_content) VALUES (%s, %s) ON CONFLICT (guild_id) DO UPDATE SET rules_content = EXCLUDED.rules_content", (guild_id, content))
-        conn.commit(); return True
-    except: return False
-
-def get_server_rules(guild_id):
-    conn = get_db_connection()
-    if not conn: return None
-    try:
-        with conn.cursor() as cur:
-            cur.execute("SELECT rules_content FROM server_rules_text WHERE guild_id = %s", (guild_id,))
-            res = cur.fetchone()
-        return res[0] if res else None
-    except: return None
