@@ -14,7 +14,7 @@ logger = logging.getLogger(__name__)
 # 1. MODAL & VIEW COMPONENTS (PERSISTENT)
 # ====================================================
 
-# Modal Rating (Sistem Shopee)
+# Modal Rating (Sistem Shopee/Ulasan)
 class RatingModal(ui.Modal):
     def __init__(self, topic, stars, bot_instance, message_to_update):
         super().__init__(title=f"Ulasan: {topic} ({stars}⭐)")
@@ -43,11 +43,9 @@ class RatingModal(ui.Modal):
             # 2. Update Embed Statistik Realtime
             try:
                 avg, count = get_rating_stats(self.topic)
-                # Kita cari embed di pesan original dan update field statistiknya
-                # Asumsi statistik ada di field pertama (index 0) atau footer
                 embed = self.message_to_update.embeds[0]
                 
-                # Update field statistik (cari field yang judulnya 'Statistik' atau update field ke-0)
+                # Update field statistik
                 found = False
                 for i, field in enumerate(embed.fields):
                     if "Statistik" in field.name:
@@ -94,35 +92,27 @@ class RulesView(ui.View):
 
 class DynamicRoleSelect(ui.Select):
     def __init__(self, placeholder="Pilih Role...", options=None):
-        # Opsi dummy agar view bisa di-load, nanti akan di-override oleh opsi asli dari pesan
         safe_options = options if options else [discord.SelectOption(label="Loading...", value="dummy")]
         super().__init__(placeholder=placeholder, min_values=0, max_values=1, options=safe_options, custom_id="dynamic_role_select")
 
     async def callback(self, interaction: discord.Interaction):
-        # Ambil opsi ASLI dari komponen yang diklik user
-        # 'self.options' di sini sudah berisi opsi yang ada di pesan Discord saat itu
         selected_values = self.values
-        all_options = self.options
+        all_options = self.options # Opsi yang ada di menu saat ini
 
         assigned, removed = [], []
         
-        # Mapping Value (ID) ke Role Object
-        # Kita perlu cek semua opsi yang ada di menu ini
         for option in all_options:
-            if not option.value.isdigit(): continue # Skip dummy
+            if not option.value.isdigit(): continue 
             
             role_id = int(option.value)
             role = interaction.guild.get_role(role_id)
-            
             if not role: continue
 
             if option.value in selected_values:
-                # Jika dipilih, tambahkan role
                 if role not in interaction.user.roles:
                     await interaction.user.add_roles(role)
                     assigned.append(role.name)
             else:
-                # Jika tidak dipilih (ada di list tapi tidak di values), hapus role
                 if role in interaction.user.roles:
                     await interaction.user.remove_roles(role)
                     removed.append(role.name)
@@ -142,13 +132,33 @@ class DynamicSupportCog(commands.Cog, name="DynamicSupport"):
     def __init__(self, bot):
         self.bot = bot
 
-    # --- LISTENER GLOBAL (PERSISTENCE HANDLER) ---
+    # --- HELPER: FIND MESSAGE BY TITLE OR ID ---
+    async def find_target_message(self, ctx, identifier: str):
+        """Mencari pesan berdasarkan ID atau JUDUL EMBED di channel saat ini."""
+        # 1. Coba cari berdasarkan ID (Angka)
+        if identifier.isdigit():
+            try:
+                return await ctx.channel.fetch_message(int(identifier))
+            except:
+                pass # Lanjut cari by title jika gagal fetch ID
+
+        # 2. Coba cari berdasarkan Judul Embed (Scan 50 pesan terakhir)
+        # Kita cari yang paling BARU (terakhir dikirim)
+        async for message in ctx.channel.history(limit=50):
+            if message.author == ctx.guild.me and message.embeds:
+                # Cek Title (Case insensitive)
+                embed_title = message.embeds[0].title
+                if embed_title and embed_title.lower() == identifier.lower():
+                    return message
+        
+        return None
+
+    # --- LISTENER ---
     @commands.Cog.listener()
     async def on_interaction(self, interaction: discord.Interaction):
         if interaction.type != discord.InteractionType.component: return
         cid = interaction.data.get("custom_id", "")
 
-        # A. Handler Verifikasi
         if cid.startswith("verify:"):
             try:
                 role_id = int(cid.split(":")[1])
@@ -161,199 +171,153 @@ class DynamicSupportCog(commands.Cog, name="DynamicSupport"):
                         await interaction.response.send_message(f"✅ Verifikasi berhasil! Role {role.mention} diberikan.", ephemeral=True)
                 else:
                     await interaction.response.send_message("❌ Role tidak ditemukan.", ephemeral=True)
-            except Exception as e:
-                logger.error(f"Verify failed: {e}")
+            except:
                 await interaction.response.send_message("❌ Gagal verifikasi.", ephemeral=True)
 
-        # B. Handler Rating (Membuka Modal)
         elif cid.startswith("rate:"):
-            # Format ID: "rate:TOPIK:BINTANG"
             try:
                 parts = cid.split(":")
                 topic = ":".join(parts[1:-1])
                 stars = int(parts[-1])
-                
-                # Kirim Modal untuk input ulasan
                 modal = RatingModal(topic, stars, self.bot, interaction.message)
                 await interaction.response.send_modal(modal)
-            except Exception as e:
-                logger.error(f"Rating modal failed: {e}")
+            except:
                 await interaction.response.send_message("❌ Gagal membuka ulasan.", ephemeral=True)
 
-    # --- COMMANDS: EMBED BUILDER MANUAL ---
+    # --- COMMANDS: SETUP ---
 
     @commands.command(name="create_embed")
     @commands.has_permissions(administrator=True)
     async def create_embed(self, ctx, channel: discord.TextChannel, color_hex: str, title: str, *, description: str):
         """
-        Buat embed dasar di channel tertentu.
-        Format: !create_embed #channel #HEXWARNA "Judul" "Deskripsi Panjang"
-        Contoh: !create_embed #info #FF0000 "Info Server" "Ini adalah deskripsi..."
+        Buat embed. Judul Embed ini nanti dipakai untuk target setup.
+        Contoh: !create_embed #umum FF0000 "Info Server" "Isi deskripsi..."
         """
         try:
-            # Konversi hex string ke int color
             if color_hex.startswith("#"): color_hex = color_hex[1:]
             color = int(color_hex, 16)
-        except:
-            color = 0x3498db # Default blue
+        except: color = 0x3498db
 
         embed = discord.Embed(title=title, description=description, color=color)
-        
-        # Cek lampiran gambar
         if ctx.message.attachments:
             embed.set_image(url=ctx.message.attachments[0].url)
 
-        msg = await channel.send(embed=embed)
-        await ctx.send(f"✅ Embed dibuat di {channel.mention}.\nID Pesan: `{msg.id}`\n(Gunakan ID ini untuk command setup lainnya)", delete_after=20)
-
-    # --- COMMANDS: ATTACHMENT / SETUP ---
+        await channel.send(embed=embed)
+        await ctx.send(f"✅ Embed **{title}** berhasil dibuat di {channel.mention}.\nSekarang kamu bisa setup pakai: `!setuprole \"{title}\" ...`", delete_after=10)
 
     @commands.command(name="setuprole")
     @commands.has_permissions(administrator=True)
-    async def setup_role(self, ctx, message_id: int, role: discord.Role, label: str, emoji: str = "🔹"):
+    async def setup_role(self, ctx, target: str, role: discord.Role, label: str, emoji: str = "🔹"):
         """
-        Menambah menu role ke pesan embed yang sudah ada.
-        Format: !setuprole [ID_Pesan] [@Role] [Label] [Emoji]
+        Target: Bisa 'Judul Embed' atau 'ID Pesan'.
+        Contoh: !setuprole "Info Server" @Warga "Ambil Warga" 🙋‍♂️
         """
-        try:
-            msg = await ctx.channel.fetch_message(message_id)
-        except:
-            return await ctx.send("❌ Pesan tidak ditemukan di channel ini. Pastikan command diketik di channel yang sama dengan pesan.")
+        msg = await self.find_target_message(ctx, target)
+        if not msg: return await ctx.send(f"❌ Pesan dengan judul/ID **'{target}'** tidak ditemukan di 50 pesan terakhir.")
 
-        # Ambil view lama atau buat baru
-        view = ui.View.from_message(msg)
-        view.timeout = None # Persistent
-
-        # Cari Select Menu Role
+        view = ui.View.from_message(msg); view.timeout = None
+        
         select_menu = None
         for child in view.children:
             if isinstance(child, ui.Select) and child.custom_id == "dynamic_role_select":
-                select_menu = child
-                break
+                select_menu = child; break
         
-        # Jika belum ada, buat baru
         if not select_menu:
-            select_menu = DynamicRoleSelect(options=[])
-            # Hapus komponen lain jika perlu agar rapi, atau append
-            # Untuk amannya kita taruh select menu di row baru atau paling atas
-            view.add_item(select_menu)
+            select_menu = DynamicRoleSelect(options=[]); view.add_item(select_menu)
 
-        # Hapus dummy "Loading" jika ada
         current_options = [opt for opt in select_menu.options if opt.value != "dummy"]
-        
-        # Tambah Opsi Baru
         if len(current_options) >= 25: return await ctx.send("❌ Maksimal 25 role per menu.")
-        
-        # Cek duplikat role
-        if any(opt.value == str(role.id) for opt in current_options):
-            return await ctx.send("❌ Role ini sudah ada di menu.")
+        if any(opt.value == str(role.id) for opt in current_options): return await ctx.send("❌ Role ini sudah ada di menu.")
 
         current_options.append(discord.SelectOption(label=label, value=str(role.id), emoji=emoji, description=f"Role: {role.name}"))
         
-        # Refresh komponen Select (karena options bersifat read-only di bbrp konteks)
+        # Re-create select to update options
         new_select = DynamicRoleSelect(options=current_options)
-        new_select.max_values = len(current_options) # Agar bisa select multiple
+        new_select.max_values = len(current_options)
         
-        # Ganti select menu lama dengan yang baru
-        # Kita harus cari indexnya
+        # Replace old select
         for i, item in enumerate(view.children):
             if isinstance(item, ui.Select) and item.custom_id == "dynamic_role_select":
-                view.children[i] = new_select
-                break
-        else:
-            # Jika tadi baru dibuat dan belum di-add ke children list dgn benar
-            view.add_item(new_select)
+                view.children[i] = new_select; break
+        else: view.add_item(new_select)
 
         await msg.edit(view=view)
         await ctx.message.delete()
-        await ctx.send(f"✅ Opsi **{label}** ditambahkan ke menu.", delete_after=5)
+        await ctx.send(f"✅ Role **{label}** ditambahkan ke embed **{target}**.", delete_after=3)
 
     @commands.command(name="setuplink")
     @commands.has_permissions(administrator=True)
-    async def setup_link(self, ctx, message_id: int, label: str, url: str, emoji: str = "🔗"):
-        """Format: !setuplink [ID_Pesan] [Label] [URL] [Emoji]"""
-        try: msg = await ctx.channel.fetch_message(message_id)
-        except: return await ctx.send("❌ Pesan tidak ditemukan.")
+    async def setup_link(self, ctx, target: str, label: str, url: str, emoji: str = "🔗"):
+        """Contoh: !setuplink "Info Server" "Website" https://web.com 🌐"""
+        msg = await self.find_target_message(ctx, target)
+        if not msg: return await ctx.send(f"❌ Pesan **'{target}'** tidak ditemukan.")
         
-        view = ui.View.from_message(msg)
-        view.timeout = None
+        view = ui.View.from_message(msg); view.timeout = None
         view.add_item(ui.Button(label=label, url=url, emoji=emoji))
         
         await msg.edit(view=view)
         await ctx.message.delete()
-        await ctx.send(f"✅ Link **{label}** ditambahkan.", delete_after=5)
+        await ctx.send(f"✅ Link ditambahkan ke **{target}**.", delete_after=3)
 
     @commands.command(name="setupverify")
     @commands.has_permissions(administrator=True)
-    async def setup_verify(self, ctx, message_id: int, role: discord.Role, label: str = "Verifikasi", emoji: str = "✅"):
-        """Format: !setupverify [ID_Pesan] [@Role] [Label] [Emoji]"""
-        try: msg = await ctx.channel.fetch_message(message_id)
-        except: return await ctx.send("❌ Pesan tidak ditemukan.")
+    async def setup_verify(self, ctx, target: str, role: discord.Role, label: str = "Verifikasi", emoji: str = "✅"):
+        """Contoh: !setupverify "Verifikasi Disini" @Member "Klik Saya" ✅"""
+        msg = await self.find_target_message(ctx, target)
+        if not msg: return await ctx.send(f"❌ Pesan **'{target}'** tidak ditemukan.")
         
-        view = ui.View.from_message(msg)
-        view.timeout = None
-        # Tambah tombol verify dengan ID dinamis
+        view = ui.View.from_message(msg); view.timeout = None
         view.add_item(ui.Button(label=label, style=discord.ButtonStyle.success, emoji=emoji, custom_id=f"verify:{role.id}"))
         
         await msg.edit(view=view)
         await ctx.message.delete()
-        await ctx.send(f"✅ Tombol Verifikasi untuk **{role.name}** ditambahkan.", delete_after=5)
+        await ctx.send(f"✅ Tombol verify ditambahkan ke **{target}**.", delete_after=3)
 
     @commands.command(name="setuprating")
     @commands.has_permissions(administrator=True)
-    async def setup_rating(self, ctx, message_id: int, topic: str):
-        """Format: !setuprating [ID_Pesan] [Topik Rating]"""
-        try: msg = await ctx.channel.fetch_message(message_id)
-        except: return await ctx.send("❌ Pesan tidak ditemukan.")
+    async def setup_rating(self, ctx, target: str, topic: str):
+        """Contoh: !setuprating "Rating Admin" "Kinerja Admin" """
+        msg = await self.find_target_message(ctx, target)
+        if not msg: return await ctx.send(f"❌ Pesan **'{target}'** tidak ditemukan.")
         
-        # Ambil statistik awal
         avg, count = get_rating_stats(topic)
-        
-        # Update Embed dengan Info Statistik
         if msg.embeds:
             embed = msg.embeds[0]
-            embed.add_field(name="📊 Statistik", value=f"⭐ **{avg}/5.0**\n👤 {count} Ulasan", inline=False)
+            # Cek apakah field statistik sudah ada
+            found = False
+            for i, field in enumerate(embed.fields):
+                if "Statistik" in field.name:
+                    embed.set_field_at(i, name="📊 Statistik", value=f"⭐ **{avg}/5.0**\n👤 {count} Ulasan", inline=False)
+                    found = True; break
+            if not found:
+                embed.add_field(name="📊 Statistik", value=f"⭐ **{avg}/5.0**\n👤 {count} Ulasan", inline=False)
         else:
-            embed = discord.Embed(description="Rating Panel")
-            embed.add_field(name="📊 Statistik", value=f"⭐ **{avg}/5.0**\n👤 {count} Ulasan", inline=False)
+            embed = discord.Embed(description="Rating Panel") # Fallback jika pesan polos
 
-        view = ui.View.from_message(msg)
-        view.timeout = None
-        
-        # Tambahkan 5 tombol bintang
+        view = ui.View.from_message(msg); view.timeout = None
         for i in range(1, 6):
             view.add_item(ui.Button(label=str(i), emoji="⭐", custom_id=f"rate:{topic}:{i}", style=discord.ButtonStyle.secondary))
         
         await msg.edit(embed=embed, view=view)
         await ctx.message.delete()
-        await ctx.send(f"✅ Sistem Rating **{topic}** ditambahkan.", delete_after=5)
+        await ctx.send(f"✅ Rating **{topic}** dipasang di **{target}**.", delete_after=3)
 
-    # --- RULES SYSTEM ---
+    # --- RULES & CONFIG ---
     @commands.command(name="set_rules")
     @commands.has_permissions(administrator=True)
     async def set_rules(self, ctx, *, content: str):
-        if set_server_rules(ctx.guild.id, content):
-            await ctx.send("✅ Rules diperbarui.", delete_after=5)
-        else:
-            await ctx.send("❌ Gagal simpan rules.")
+        if set_server_rules(ctx.guild.id, content): await ctx.send("✅ Rules diupdate.", delete_after=3)
+        else: await ctx.send("❌ DB Error.")
 
     @commands.command(name="setup_rating_log")
     @commands.has_permissions(administrator=True)
     async def setup_rating_log(self, ctx, channel: discord.TextChannel):
-        if set_rating_log_channel(ctx.guild.id, channel.id):
-            await ctx.send(f"✅ Log rating ke {channel.mention}")
-        else:
-            await ctx.send("❌ Gagal simpan config.")
+        if set_rating_log_channel(ctx.guild.id, channel.id): await ctx.send(f"✅ Log rating: {channel.mention}")
+        else: await ctx.send("❌ DB Error.")
 
-    # --- COG LOAD ---
     async def cog_load(self):
-        # Register Persistent Views
         self.bot.add_view(RulesView())
-        
-        # Register Role Select Handler (dummy)
-        v = ui.View(timeout=None)
-        v.add_item(DynamicRoleSelect())
-        self.bot.add_view(v)
+        v = ui.View(timeout=None); v.add_item(DynamicRoleSelect()); self.bot.add_view(v)
 
 async def setup(bot):
     await bot.add_cog(DynamicSupportCog(bot))
