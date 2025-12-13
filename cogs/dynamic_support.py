@@ -5,79 +5,62 @@ from discord import ui
 import logging
 from utils.database import (
     set_rating_log_channel, get_rating_log_channel, 
-    add_rating, get_rating_stats,
-    set_server_rules, get_server_rules
+    add_rating, get_rating_stats
 )
 
 logger = logging.getLogger(__name__)
 
 # ====================================================
-# 1. KOMPONEN UI (View & Modal) - Tidak Berubah
+# 1. UI COMPONENTS
 # ====================================================
 
 class RatingModal(ui.Modal):
-    def __init__(self, topic, stars, bot_instance, message_to_update):
-        super().__init__(title=f"Ulasan: {topic} ({stars}⭐)")
+    def __init__(self, topic, stars, bot):
+        super().__init__(title=f"⭐ Berikan Ulasan ({stars}/5)")
         self.topic = topic
         self.stars = stars
-        self.bot = bot_instance
-        self.message_to_update = message_to_update
+        self.bot = bot
 
         self.comment = ui.TextInput(
-            label="Tulis Ulasan / Pesan Anda",
+            label="Komentar / Pesan",
             style=discord.TextStyle.paragraph,
-            placeholder="Contoh: Pelayanan sangat cepat, mantap!",
+            placeholder="Tulis ulasanmu di sini...",
             required=True,
-            max_length=500
+            max_length=1000
         )
         self.add_item(self.comment)
 
     async def on_submit(self, interaction: discord.Interaction):
-        success = add_rating(self.topic, interaction.user.id, self.stars, self.comment.value)
-        
-        if success:
-            await interaction.response.send_message(f"✅ Terima kasih! Rating **{self.stars}⭐** dan ulasan terkirim.", ephemeral=True)
-            
-            # Update Realtime Statistik di Embed
-            try:
-                avg, count = get_rating_stats(self.topic)
-                embed = self.message_to_update.embeds[0]
-                found = False
-                for i, field in enumerate(embed.fields):
-                    if "Statistik" in field.name:
-                        embed.set_field_at(i, name="📊 Statistik", value=f"⭐ **{avg}/5.0**\n👤 {count} Ulasan", inline=False)
-                        found = True; break
-                if not found:
-                    embed.add_field(name="📊 Statistik", value=f"⭐ **{avg}/5.0**\n👤 {count} Ulasan", inline=False)
-                await self.message_to_update.edit(embed=embed)
-            except: pass
-
-            # Kirim Log
+        # Simpan ke DB
+        if add_rating(interaction.user.id, self.topic, self.stars, self.comment.value):
+            # 1. Kirim Log ke Channel (GAYA DISCOOHOOK / WEBHOOK)
             log_id = get_rating_log_channel(interaction.guild.id)
             if log_id:
-                log_ch = self.bot.get_channel(log_id)
-                if log_ch:
-                    log_embed = discord.Embed(title="🌟 Ulasan Baru", color=discord.Color.gold())
-                    log_embed.set_thumbnail(url=interaction.user.display_avatar.url)
-                    log_embed.add_field(name="👤 User", value=interaction.user.mention, inline=True)
-                    log_embed.add_field(name="🏷️ Topik", value=self.topic, inline=True)
-                    log_embed.add_field(name="⭐ Rating", value=f"{'⭐' * self.stars} ({self.stars}/5)", inline=False)
-                    log_embed.add_field(name="💬 Pesan", value=f"```{self.comment.value}```", inline=False)
-                    log_embed.set_footer(text=f"Total: {count} | Avg: {avg}")
-                    await log_ch.send(embed=log_embed)
+                channel = self.bot.get_channel(log_id)
+                if channel:
+                    # Hitung stats baru
+                    avg, count = get_rating_stats(self.topic)
+                    
+                    # Bikin Embed Log yang Cantik
+                    embed = discord.Embed(
+                        title=f"New Review: {self.topic}",
+                        color=discord.Color.gold() if self.stars >= 4 else discord.Color.red(),
+                        timestamp=discord.utils.utcnow()
+                    )
+                    embed.set_author(name=interaction.user.display_name, icon_url=interaction.user.display_avatar.url)
+                    embed.set_thumbnail(url=interaction.user.display_avatar.url)
+                    
+                    stars_str = "⭐" * self.stars
+                    embed.add_field(name="Rating", value=f"{stars_str} **({self.stars}/5)**", inline=False)
+                    embed.add_field(name="Review", value=f"```\n{self.comment.value}\n```", inline=False)
+                    embed.set_footer(text=f"Total: {count} Reviews | Avg: {avg}/5.0")
+                    
+                    await channel.send(embed=embed)
+
+            # 2. Respon ke User (Ephemeral)
+            await interaction.response.send_message("✅ Ulasan kamu berhasil dikirim! Terima kasih.", ephemeral=True)
         else:
-            await interaction.response.send_message("❌ Database Error.", ephemeral=True)
-
-class RulesView(ui.View):
-    def __init__(self):
-        super().__init__(timeout=None)
-
-    @ui.button(label="Baca Rules", style=discord.ButtonStyle.danger, emoji="📜", custom_id="rules:read")
-    async def read_rules(self, interaction: discord.Interaction, button: ui.Button):
-        rules_text = get_server_rules(interaction.guild_id)
-        if not rules_text: rules_text = "⚠️ Rules belum diatur oleh Admin."
-        embed = discord.Embed(title="📜 Peraturan Komunitas", description=rules_text, color=discord.Color.red())
-        await interaction.response.send_message(embed=embed, ephemeral=True)
+            await interaction.response.send_message("❌ Database error. Coba lagi nanti.", ephemeral=True)
 
 class DynamicRoleSelect(ui.Select):
     def __init__(self, placeholder="Pilih Role...", options=None):
@@ -85,225 +68,188 @@ class DynamicRoleSelect(ui.Select):
         super().__init__(placeholder=placeholder, min_values=0, max_values=1, options=safe_options, custom_id="dynamic_role_select")
 
     async def callback(self, interaction: discord.Interaction):
-        selected_values = self.values; all_options = self.options
-        assigned, removed = [], []
+        # Ambil opsi yang valid (bukan dummy)
+        valid_options = [opt for opt in self.options if opt.value.isdigit()]
+        selected_ids = self.values
         
-        for option in all_options:
-            if not option.value.isdigit(): continue 
-            role_id = int(option.value)
+        added, removed = [], []
+
+        for opt in valid_options:
+            role_id = int(opt.value)
             role = interaction.guild.get_role(role_id)
             if not role: continue
 
-            if option.value in selected_values:
+            if opt.value in selected_ids:
                 if role not in interaction.user.roles:
-                    await interaction.user.add_roles(role); assigned.append(role.name)
+                    await interaction.user.add_roles(role); added.append(role.name)
             else:
                 if role in interaction.user.roles:
                     await interaction.user.remove_roles(role); removed.append(role.name)
-
-        msg = ""
-        if assigned: msg += f"✅ **Ditambahkan:** {', '.join(assigned)}\n"
-        if removed: msg += f"❌ **Dihapus:** {', '.join(removed)}"
-        if not msg: msg = "Tidak ada perubahan role."
-        await interaction.response.send_message(msg, ephemeral=True)
+        
+        if added: await interaction.response.send_message(f"✅ Role **{', '.join(added)}** ditambahkan.", ephemeral=True)
+        elif removed: await interaction.response.send_message(f"❌ Role **{', '.join(removed)}** dilepas.", ephemeral=True)
+        else: await interaction.response.send_message("Tidak ada perubahan.", ephemeral=True)
 
 # ====================================================
-# 2. MAIN COG (SLASH COMMANDS)
+# 2. MAIN LOGIC
 # ====================================================
 
 class DynamicSupportCog(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
 
-    # --- Helper: Cari Pesan (ID atau Judul) ---
-    async def find_message(self, interaction: discord.Interaction, target: str):
-        # 1. Cek jika input adalah ID angka
-        if target.isdigit():
-            try: return await interaction.channel.fetch_message(int(target))
-            except: pass
-        
-        # 2. Cari berdasarkan Judul Embed di 50 pesan terakhir channel ini
-        async for message in interaction.channel.history(limit=50):
-            if message.author == interaction.guild.me and message.embeds:
-                if message.embeds[0].title and message.embeds[0].title.lower() == target.lower():
-                    return message
+    async def find_message(self, interaction, target: str):
+        # Cari pesan berdasarkan Judul Embed di channel ini
+        async for msg in interaction.channel.history(limit=50):
+            if msg.author == interaction.guild.me and msg.embeds:
+                if msg.embeds[0].title and msg.embeds[0].title.lower() == target.lower():
+                    return msg
         return None
 
-    # --- LISTENER INTERAKSI (Tombol/Menu) ---
+    # --- LISTENER TOMBOL (GLOBAL) ---
     @commands.Cog.listener()
     async def on_interaction(self, interaction: discord.Interaction):
         if interaction.type != discord.InteractionType.component: return
         cid = interaction.data.get("custom_id", "")
 
+        # Handler Verify
         if cid.startswith("verify:"):
             try:
                 role = interaction.guild.get_role(int(cid.split(":")[1]))
                 if role:
-                    if role in interaction.user.roles: await interaction.response.send_message(f"✅ Sudah punya {role.mention}!", ephemeral=True)
-                    else: await interaction.user.add_roles(role); await interaction.response.send_message(f"✅ Verifikasi sukses! +{role.mention}", ephemeral=True)
-                else: await interaction.response.send_message("❌ Role hilang.", ephemeral=True)
-            except: await interaction.response.send_message("❌ Error.", ephemeral=True)
+                    if role in interaction.user.roles:
+                        await interaction.response.send_message("✅ Kamu sudah terverifikasi.", ephemeral=True)
+                    else:
+                        await interaction.user.add_roles(role)
+                        await interaction.response.send_message(f"✅ Berhasil! Role **{role.name}** diberikan.", ephemeral=True)
+                else:
+                    await interaction.response.send_message("❌ Role tidak ditemukan.", ephemeral=True)
+            except:
+                await interaction.response.send_message("❌ Error sistem verifikasi.", ephemeral=True)
 
+        # Handler Rating (Buka Modal)
         elif cid.startswith("rate:"):
             try:
-                parts = cid.split(":"); topic = ":".join(parts[1:-1]); stars = int(parts[-1])
-                await interaction.response.send_modal(RatingModal(topic, stars, self.bot, interaction.message))
-            except: await interaction.response.send_message("❌ Error modal.", ephemeral=True)
+                parts = cid.split(":") # rate:Topik:Stars
+                topic = parts[1]
+                stars = int(parts[2])
+                await interaction.response.send_modal(RatingModal(topic, stars, self.bot))
+            except:
+                await interaction.response.send_message("❌ Error membuka rating.", ephemeral=True)
 
-    # ====================================================
-    # SLASH COMMANDS START HERE
-    # ====================================================
+    # --- COMMANDS ---
 
-    @app_commands.command(name="create_embed", description="Buat embed dasar untuk pengumuman atau panel.")
+    @app_commands.command(name="create_embed", description="Buat embed ala Webhook/Discohook.")
     @app_commands.describe(
-        judul="Judul embed (Penting: Dipakai untuk target setup)",
-        deskripsi="Isi pesan embed",
-        warna="Kode warna HEX (contoh: FF0000 untuk merah)",
-        gambar="Upload gambar untuk embed (Opsional)"
+        judul="Judul utama (dipakai untuk target setup)",
+        deskripsi="Isi pesan utama",
+        warna="Warna HEX (cth: FF0000)",
+        gambar="Gambar besar di bawah (Opsional)",
+        thumbnail="Gambar kecil di pojok kanan (Opsional)",
+        footer="Tulisan kecil di bawah (Opsional)"
     )
     @app_commands.checks.has_permissions(administrator=True)
-    async def create_embed(self, interaction: discord.Interaction, judul: str, deskripsi: str, warna: str = "3498db", gambar: discord.Attachment = None):
-        try:
-            if warna.startswith("#"): warna = warna[1:]
-            color_int = int(warna, 16)
-        except: color_int = 0x3498db
+    async def create_embed(self, interaction: discord.Interaction, judul: str, deskripsi: str, warna: str = "2b2d31", gambar: discord.Attachment = None, thumbnail: discord.Attachment = None, footer: str = None):
+        try: color = int(warna.replace("#", ""), 16)
+        except: color = 0x2b2d31
 
-        embed = discord.Embed(title=judul, description=deskripsi, color=color_int)
-        if gambar:
-            embed.set_image(url=gambar.url)
+        embed = discord.Embed(title=judul, description=deskripsi, color=color)
+        if gambar: embed.set_image(url=gambar.url)
+        if thumbnail: embed.set_thumbnail(url=thumbnail.url)
+        if footer: embed.set_footer(text=footer)
 
         await interaction.channel.send(embed=embed)
-        await interaction.response.send_message(f"✅ Embed **{judul}** berhasil dibuat! Gunakan judul ini untuk setup tombol.", ephemeral=True)
+        await interaction.response.send_message(f"✅ Embed **{judul}** dibuat! Gunakan `/setup_...` untuk pasang tombol.", ephemeral=True)
 
-    @app_commands.command(name="setup_role", description="Tambah menu dropdown role ke embed.")
-    @app_commands.describe(target="Judul Embed atau ID Pesan", role="Role yang akan diberikan", label="Nama di menu", emoji="Emoji ikon")
-    @app_commands.checks.has_permissions(administrator=True)
-    async def setup_role(self, interaction: discord.Interaction, target: str, role: discord.Role, label: str, emoji: str = "🔹"):
-        await interaction.response.defer(ephemeral=True) # Defer karena cari pesan butuh waktu
-        
-        msg = await self.find_message(interaction, target)
-        if not msg:
-            return await interaction.followup.send(f"❌ Pesan **'{target}'** tidak ditemukan di channel ini.", ephemeral=True)
-
-        view = ui.View.from_message(msg); view.timeout = None
-        
-        select_menu = None
-        for child in view.children:
-            if isinstance(child, ui.Select) and child.custom_id == "dynamic_role_select":
-                select_menu = child; break
-        
-        if not select_menu:
-            select_menu = DynamicRoleSelect(options=[]); view.add_item(select_menu)
-
-        current_options = [opt for opt in select_menu.options if opt.value != "dummy"]
-        if len(current_options) >= 25: return await interaction.followup.send("❌ Maksimal 25 role.", ephemeral=True)
-        if any(opt.value == str(role.id) for opt in current_options): return await interaction.followup.send("❌ Role sudah ada.", ephemeral=True)
-
-        current_options.append(discord.SelectOption(label=label, value=str(role.id), emoji=emoji, description=f"Role: {role.name}"))
-        
-        # Re-create select
-        new_select = DynamicRoleSelect(options=current_options); new_select.max_values = len(current_options)
-        
-        for i, item in enumerate(view.children):
-            if isinstance(item, ui.Select) and item.custom_id == "dynamic_role_select":
-                view.children[i] = new_select; break
-        else: view.add_item(new_select)
-
-        await msg.edit(view=view)
-        await interaction.followup.send(f"✅ Role **{label}** ditambahkan ke **{target}**.", ephemeral=True)
-
-    @app_commands.command(name="setup_link", description="Tambah tombol link ke embed.")
-    @app_commands.describe(target="Judul Embed atau ID Pesan", label="Tulisan tombol", url="Link tujuan", emoji="Ikon")
-    @app_commands.checks.has_permissions(administrator=True)
-    async def setup_link(self, interaction: discord.Interaction, target: str, label: str, url: str, emoji: str = "🔗"):
-        await interaction.response.defer(ephemeral=True)
-        
-        msg = await self.find_message(interaction, target)
-        if not msg: return await interaction.followup.send(f"❌ Pesan **'{target}'** tidak ditemukan.", ephemeral=True)
-
-        view = ui.View.from_message(msg); view.timeout = None
-        view.add_item(ui.Button(label=label, url=url, emoji=emoji))
-        
-        await msg.edit(view=view)
-        await interaction.followup.send(f"✅ Link ditambahkan ke **{target}**.", ephemeral=True)
-
-    @app_commands.command(name="setup_verify", description="Tambah tombol verifikasi role.")
-    @app_commands.describe(target="Judul Embed atau ID Pesan", role="Role yang didapat", label="Tulisan tombol", emoji="Ikon")
+    @app_commands.command(name="setup_verify", description="Pasang tombol Verify.")
+    @app_commands.describe(target="Judul Embed yang mau dipasang", role="Role yang didapat", label="Tulisan tombol", emoji="Emoji")
     @app_commands.checks.has_permissions(administrator=True)
     async def setup_verify(self, interaction: discord.Interaction, target: str, role: discord.Role, label: str = "Verifikasi", emoji: str = "✅"):
         await interaction.response.defer(ephemeral=True)
-        
         msg = await self.find_message(interaction, target)
-        if not msg: return await interaction.followup.send(f"❌ Pesan **'{target}'** tidak ditemukan.", ephemeral=True)
+        if not msg: return await interaction.followup.send(f"❌ Embed dengan judul **{target}** tidak ketemu.", ephemeral=True)
 
         view = ui.View.from_message(msg); view.timeout = None
         view.add_item(ui.Button(label=label, style=discord.ButtonStyle.success, emoji=emoji, custom_id=f"verify:{role.id}"))
         
         await msg.edit(view=view)
-        await interaction.followup.send(f"✅ Tombol verify ditambahkan ke **{target}**.", ephemeral=True)
+        await interaction.followup.send("✅ Tombol Verify dipasang.", ephemeral=True)
 
-    @app_commands.command(name="setup_rating", description="Tambah sistem rating bintang (Shopee style).")
-    @app_commands.describe(target="Judul Embed atau ID Pesan", topik="Nama topik rating (misal: Admin)")
+    @app_commands.command(name="setup_role", description="Pasang dropdown Select Role.")
+    @app_commands.describe(target="Judul Embed", role="Role pilihan", label="Nama di menu", emoji="Emoji")
+    @app_commands.checks.has_permissions(administrator=True)
+    async def setup_role(self, interaction: discord.Interaction, target: str, role: discord.Role, label: str, emoji: str = "🔹"):
+        await interaction.response.defer(ephemeral=True)
+        msg = await self.find_message(interaction, target)
+        if not msg: return await interaction.followup.send(f"❌ Embed **{target}** tidak ketemu.", ephemeral=True)
+
+        view = ui.View.from_message(msg); view.timeout = None
+        select = None
+        for child in view.children:
+            if isinstance(child, ui.Select) and child.custom_id == "dynamic_role_select":
+                select = child; break
+        
+        if not select:
+            select = DynamicRoleSelect(options=[]); view.add_item(select)
+
+        # Update opsi
+        opts = [o for o in select.options if o.value != "dummy"]
+        if len(opts) >= 25: return await interaction.followup.send("❌ Menu penuh (max 25).", ephemeral=True)
+        
+        opts.append(discord.SelectOption(label=label, value=str(role.id), emoji=emoji))
+        
+        # Replace select lama dengan yang baru
+        new_select = DynamicRoleSelect(options=opts); new_select.max_values = len(opts)
+        for i, item in enumerate(view.children):
+            if item.custom_id == "dynamic_role_select":
+                view.children[i] = new_select; break
+        else: view.add_item(new_select)
+
+        await msg.edit(view=view)
+        await interaction.followup.send(f"✅ Role **{label}** dimasukkan ke menu.", ephemeral=True)
+
+    @app_commands.command(name="setup_rating", description="Pasang tombol Rating Bintang.")
+    @app_commands.describe(target="Judul Embed", topik="Topik (cth: Admin)")
     @app_commands.checks.has_permissions(administrator=True)
     async def setup_rating(self, interaction: discord.Interaction, target: str, topik: str):
         await interaction.response.defer(ephemeral=True)
-        
         msg = await self.find_message(interaction, target)
-        if not msg: return await interaction.followup.send(f"❌ Pesan **'{target}'** tidak ditemukan.", ephemeral=True)
-
-        avg, count = get_rating_stats(topik)
-        if msg.embeds:
-            embed = msg.embeds[0]
-            found = False
-            for i, field in enumerate(embed.fields):
-                if "Statistik" in field.name:
-                    embed.set_field_at(i, name="📊 Statistik", value=f"⭐ **{avg}/5.0**\n👤 {count} Ulasan", inline=False)
-                    found = True; break
-            if not found: embed.add_field(name="📊 Statistik", value=f"⭐ **{avg}/5.0**\n👤 {count} Ulasan", inline=False)
-        else:
-            embed = discord.Embed(description="Rating Panel")
-            embed.add_field(name="📊 Statistik", value=f"⭐ **{avg}/5.0**\n👤 {count} Ulasan", inline=False)
+        if not msg: return await interaction.followup.send(f"❌ Embed **{target}** tidak ketemu.", ephemeral=True)
 
         view = ui.View.from_message(msg); view.timeout = None
-        # Tambah 5 bintang
+        # Tambah 5 tombol bintang
         for i in range(1, 6):
             view.add_item(ui.Button(label=str(i), emoji="⭐", custom_id=f"rate:{topik}:{i}", style=discord.ButtonStyle.secondary))
         
+        # Update tampilan embed dengan statistik
+        avg, count = get_rating_stats(topik)
+        embed = msg.embeds[0]
+        stat_text = f"⭐ **{avg}/5.0**\n👤 {count} Ulasan"
+        
+        # Cek field statistik
+        found = False
+        for i, f in enumerate(embed.fields):
+            if "Statistik" in f.name:
+                embed.set_field_at(i, name="📊 Statistik", value=stat_text, inline=False)
+                found = True; break
+        if not found: embed.add_field(name="📊 Statistik", value=stat_text, inline=False)
+
         await msg.edit(embed=embed, view=view)
-        await interaction.followup.send(f"✅ Sistem rating **{topik}** dipasang di **{target}**.", ephemeral=True)
+        await interaction.followup.send(f"✅ Rating **{topik}** dipasang.", ephemeral=True)
 
-    @app_commands.command(name="config_rules", description="Atur isi teks peraturan server.")
+    @app_commands.command(name="config_log", description="Set channel untuk laporan rating.")
     @app_commands.checks.has_permissions(administrator=True)
-    async def config_rules(self, interaction: discord.Interaction, isi_peraturan: str):
-        if set_server_rules(interaction.guild_id, isi_peraturan):
-            await interaction.response.send_message("✅ Isi peraturan berhasil diperbarui.", ephemeral=True)
-        else:
-            await interaction.response.send_message("❌ Gagal menyimpan database.", ephemeral=True)
-
-    @app_commands.command(name="config_rating_log", description="Atur channel log untuk rating.")
-    @app_commands.checks.has_permissions(administrator=True)
-    async def config_rating_log(self, interaction: discord.Interaction, channel: discord.TextChannel):
+    async def config_log(self, interaction: discord.Interaction, channel: discord.TextChannel):
         if set_rating_log_channel(interaction.guild.id, channel.id):
-            await interaction.response.send_message(f"✅ Log rating akan dikirim ke {channel.mention}", ephemeral=True)
+            await interaction.response.send_message(f"✅ Log rating diset ke {channel.mention}", ephemeral=True)
         else:
-            await interaction.response.send_message("❌ Gagal menyimpan database.", ephemeral=True)
-
-    @app_commands.command(name="setup_rules_button", description="Pasang tombol 'Baca Rules' di embed.")
-    @app_commands.checks.has_permissions(administrator=True)
-    async def setup_rules_button(self, interaction: discord.Interaction, target: str):
-        await interaction.response.defer(ephemeral=True)
-        msg = await self.find_message(interaction, target)
-        if not msg: return await interaction.followup.send("❌ Pesan tidak ditemukan.", ephemeral=True)
-        
-        view = ui.View.from_message(msg); view.timeout = None
-        view.add_item(ui.Button(label="Baca Rules", style=discord.ButtonStyle.danger, emoji="📜", custom_id="rules:read"))
-        
-        await msg.edit(view=view)
-        await interaction.followup.send("✅ Tombol Rules dipasang.", ephemeral=True)
+            await interaction.response.send_message("❌ Error DB.", ephemeral=True)
 
     async def cog_load(self):
-        self.bot.add_view(RulesView())
-        v = ui.View(timeout=None); v.add_item(DynamicRoleSelect()); self.bot.add_view(v)
+        # Load persistent view
+        v = ui.View(timeout=None)
+        v.add_item(DynamicRoleSelect())
+        self.bot.add_view(v)
 
 async def setup(bot):
     await bot.add_cog(DynamicSupportCog(bot))
