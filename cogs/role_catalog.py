@@ -42,7 +42,12 @@ class DynamicRoleSelect(ui.Select):
 
         # 2. Logic Add/Remove Role
         catalog_role_ids = [int(opt['role_id']) for opt in config['options']]
-        selected_role_ids = [int(val) for val in self.values]
+        
+        # --- PERBAIKAN DI SINI ---
+        # Kita ambil values langsung dari interaction.data karena self.values itu read-only
+        # saat dipanggil lewat listener manual
+        raw_values = interaction.data.get('values', [])
+        selected_role_ids = [int(val) for val in raw_values]
         
         user = interaction.user
         guild = interaction.guild
@@ -166,7 +171,7 @@ class RoleCatalogCog(commands.Cog, name="RoleCatalog"):
                 # Rebuild view on-the-fly
                 view = DynamicCatalogView(config['options'])
                 select = view.children[0]
-                select.values = interaction.data.get('values', [])
+                
                 await select.callback(interaction)
 
 async def setup(bot):
