@@ -4,6 +4,8 @@ from discord.ext import commands
 from discord import ui
 import logging
 import asyncio
+import time
+import io
 from utils.database import (
     set_rating_log_channel, get_rating_log_channel, 
     add_rating, get_rating_stats, get_all_ratings, update_rating_image
@@ -32,50 +34,131 @@ class RatingModal(ui.Modal):
     async def on_submit(self, interaction: discord.Interaction):
         user_id = interaction.user.id
         
-        # 1. Simpan Data Awal (Teks dulu)
+        # 1. Simpan Ulasan Teks ke Database
         if add_rating(user_id, self.topic, self.stars, self.comment.value):
             
-            # 2. Update Panel Real-time (Sementara)
+            # 2. Update Panel Real-time
             await self.update_panel_display()
             
-            # 3. Minta Gambar (Flow Upload)
-            await interaction.response.send_message(
+            # 3. Minta Gambar (Flow Upload dengan Auto-Delete)
+            instruction_msg = await interaction.response.send_message(
                 "✅ **Ulasan teks disimpan!**\n"
-                "📸 Apakah Anda ingin melampirkan bukti gambar/screenshot?\n"
-                "👉 **Kirim gambar sekarang di chat ini** (Anda punya waktu 60 detik).\n"
-                "👉 Atau abaikan pesan ini jika tidak ingin mengirim gambar.",
+                "📸 **Kirim BUKTI GAMBAR sekarang di chat ini.**\n"
+                "⏳ Waktu: 60 detik.\n"
+                "🗑️ *Pesan yang Anda kirim akan otomatis dihapus agar chat tetap rapi.*",
                 ephemeral=True
             )
 
-            # 4. Tunggu User Mengirim Gambar
+            # Cek pesan dari user di channel yang sama
             def check(m):
-                return m.author.id == user_id and m.channel.id == interaction.channel.id and m.attachments
+                return m.author.id == user_id and m.channel.id == interaction.channel.id
 
-            image_url = None
-            try:
-                msg = await self.bot.wait_for('message', check=check, timeout=60.0)
-                # Ambil attachment pertama
-                if msg.attachments:
-                    image_url = msg.attachments[0].url
-                    # Update database dengan URL gambar
-                    update_rating_image(user_id, self.topic, image_url)
-                    
-                    # Hapus pesan user agar chat bersih (opsional, butuh manage_messages)
-                    try: await msg.delete()
-                    except: pass
-                    
-                    await interaction.followup.send("✅ **Gambar berhasil ditambahkan!**", ephemeral=True)
-            except asyncio.TimeoutError:
-                pass # Tidak kirim gambar, lanjut saja
-
-            # 5. Update Log Admin (Sekarang sudah final dengan atau tanpa gambar)
-            await self.send_admin_log(interaction, image_url)
+            image_processed = False
+            permanent_image_url = None
             
-            # 6. Update Panel lagi (untuk memastikan sinkron jika ada delay)
+            end_time = time.time() + 60
+            
+            while True:
+                time_left = end_time - time.time()
+                if time_left <= 0: break
+                
+                try:
+                    # Tunggu pesan user
+                    msg = await self.bot.wait_for('message', check=check, timeout=time_left)
+                    
+                    # === FITUR AUTO-DELETE ===
+                    # Hapus pesan user setelah 3 detik agar chat bersih
+                    # (Delay dikit biar user sadar pesannya masuk)
+                    await msg.delete(delay=3)
+
+                    # Jika pesan berisi GAMBAR
+                    if msg.attachments:
+                        # 1. Baca data gambar
+                        file_bytes = await msg.attachments[0].read()
+                        filename = msg.attachments[0].filename
+                        
+                        # 2. Upload ke Log Channel (Agar gambar PERMANEN meski pesan user dihapus)
+                        permanent_image_url = await self.upload_to_log_and_get_url(
+                            interaction, file_bytes, filename
+                        )
+                        
+                        if permanent_image_url:
+                            # 3. Update Database dengan URL Permanen
+                            update_rating_image(user_id, self.topic, permanent_image_url)
+                            await interaction.followup.send("✅ **Gambar berhasil disimpan!**", ephemeral=True)
+                        else:
+                            await interaction.followup.send("⚠️ Gambar terkirim tapi gagal disimpan permanen (Log Channel belum diatur).", ephemeral=True)
+                        
+                        image_processed = True
+                        break # Keluar loop jika sukses
+                    
+                    else:
+                        # Jika pesan TEKS biasa (bukan gambar)
+                        # Pesan sudah dihapus di atas (msg.delete), tinggal kasih tahu user
+                        temp_msg = await interaction.followup.send("⚠️ Harap kirim **GAMBAR/FOTO**, bukan teks.", ephemeral=True)
+                        # Tidak break, lanjut loop menunggu gambar
+                        
+                except asyncio.TimeoutError:
+                    break # Waktu habis
+            
+            # 4. Jika tidak kirim gambar, kirim Log Teks saja
+            if not image_processed:
+                await self.send_text_log_only(interaction)
+
+            # 5. Update Panel lagi (Sinkronisasi akhir)
             await self.update_panel_display()
 
         else:
             await interaction.response.send_message("❌ Gagal menyimpan ulasan (DB Error).", ephemeral=True)
+
+    async def upload_to_log_and_get_url(self, interaction, file_bytes, filename):
+        """Mengupload gambar ke Log Channel dan mengambil URL-nya."""
+        log_id = get_rating_log_channel(interaction.guild.id)
+        if not log_id: return None
+
+        channel = self.bot.get_channel(log_id)
+        if not channel: return None
+
+        # Siapkan Embed Log
+        avg, count = get_rating_stats(self.topic)
+        color = discord.Color.green() if self.stars >= 4 else discord.Color.red()
+        
+        embed_log = discord.Embed(title=f"📝 Ulasan Baru: {self.topic}", color=color, timestamp=discord.utils.utcnow())
+        embed_log.set_author(name=interaction.user.display_name, icon_url=interaction.user.display_avatar.url)
+        embed_log.set_thumbnail(url=interaction.user.display_avatar.url)
+        embed_log.add_field(name="Nilai", value=f"{'⭐' * self.stars} **({self.stars}/5)**", inline=False)
+        embed_log.add_field(name="Komentar", value=f"```\n{self.comment.value}\n```", inline=False)
+        embed_log.set_footer(text=f"Total: {count} Ulasan | Rata-rata: {avg}")
+
+        # Pasang Gambar sebagai attachment
+        file = discord.File(io.BytesIO(file_bytes), filename=filename)
+        embed_log.set_image(url=f"attachment://{filename}")
+
+        # Kirim ke Log Channel
+        sent_msg = await channel.send(embed=embed_log, file=file)
+        
+        # Ambil URL attachment dari pesan log (URL ini permanen)
+        if sent_msg.embeds and sent_msg.embeds[0].image:
+             return sent_msg.embeds[0].image.url
+        elif sent_msg.attachments:
+             return sent_msg.attachments[0].url
+        return None
+
+    async def send_text_log_only(self, interaction):
+        """Kirim log tanpa gambar jika user tidak upload."""
+        log_id = get_rating_log_channel(interaction.guild.id)
+        if log_id:
+            channel = self.bot.get_channel(log_id)
+            if channel:
+                avg, count = get_rating_stats(self.topic)
+                color = discord.Color.green() if self.stars >= 4 else discord.Color.red()
+                embed_log = discord.Embed(title=f"📝 Ulasan Baru: {self.topic}", color=color, timestamp=discord.utils.utcnow())
+                embed_log.set_author(name=interaction.user.display_name, icon_url=interaction.user.display_avatar.url)
+                embed_log.set_thumbnail(url=interaction.user.display_avatar.url)
+                embed_log.add_field(name="Nilai", value=f"{'⭐' * self.stars} **({self.stars}/5)**", inline=False)
+                embed_log.add_field(name="Komentar", value=f"```\n{self.comment.value}\n```", inline=False)
+                embed_log.set_footer(text=f"Total: {count} Ulasan | Rata-rata: {avg}")
+                await channel.send(embed=embed_log)
 
     async def update_panel_display(self):
         """Helper untuk update tampilan panel rating."""
@@ -95,65 +178,36 @@ class RatingModal(ui.Modal):
         except Exception as e:
             logger.warning(f"Gagal update panel: {e}")
 
-    async def send_admin_log(self, interaction, image_url):
-        log_id = get_rating_log_channel(interaction.guild.id)
-        if log_id:
-            channel = self.bot.get_channel(log_id)
-            if channel:
-                avg, count = get_rating_stats(self.topic)
-                color = discord.Color.green() if self.stars >= 4 else discord.Color.red()
-                embed_log = discord.Embed(title=f"📝 Ulasan Baru: {self.topic}", color=color, timestamp=discord.utils.utcnow())
-                embed_log.set_author(name=interaction.user.display_name, icon_url=interaction.user.display_avatar.url)
-                embed_log.set_thumbnail(url=interaction.user.display_avatar.url)
-                
-                embed_log.add_field(name="Nilai", value=f"{'⭐' * self.stars} **({self.stars}/5)**", inline=False)
-                embed_log.add_field(name="Komentar", value=f"```\n{self.comment.value}\n```", inline=False)
-                
-                if image_url:
-                    embed_log.set_image(url=image_url)
-                    embed_log.add_field(name="Lampiran", value="[Lihat Gambar](" + image_url + ")", inline=False)
-
-                embed_log.set_footer(text=f"Total: {count} Ulasan | Rata-rata: {avg}")
-                await channel.send(embed=embed_log)
-
 # --- 2. MAIN COG ---
 class RatingSystem(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
 
-    # Listener Tombol
     @commands.Cog.listener()
     async def on_interaction(self, interaction: discord.Interaction):
         if interaction.type != discord.InteractionType.component: return
         cid = interaction.data.get("custom_id", "")
 
-        # A. Handler Tombol Bintang (rate:TOPIK:BINTANG:ROLE_ID)
         if cid.startswith("rate:"):
             try:
                 parts = cid.split(":")
                 topic = parts[1]
                 stars = int(parts[2])
-                # parts[3] adalah Role ID (atau "0" jika semua boleh)
                 role_id_req = int(parts[3]) if len(parts) > 3 else 0
 
-                # --- CEK PERMISSION ROLE ---
                 if role_id_req != 0:
                     user_role_ids = [r.id for r in interaction.user.roles]
-                    if role_id_req not in user_role_ids:
-                        # Cek apakah user admin (opsional, tapi bagus untuk bypass)
-                        if not interaction.user.guild_permissions.administrator:
-                            required_role = interaction.guild.get_role(role_id_req)
-                            role_name = required_role.name if required_role else "Unknown Role"
-                            await interaction.response.send_message(f"❌ Maaf, Anda memerlukan role **{role_name}** untuk memberikan rating di sini.", ephemeral=True)
-                            return
-                # ---------------------------
+                    if role_id_req not in user_role_ids and not interaction.user.guild_permissions.administrator:
+                        required_role = interaction.guild.get_role(role_id_req)
+                        role_name = required_role.name if required_role else "Unknown Role"
+                        await interaction.response.send_message(f"❌ Maaf, Anda memerlukan role **{role_name}** untuk memberikan rating.", ephemeral=True)
+                        return
 
                 await interaction.response.send_modal(RatingModal(topic, stars, self.bot, interaction.message))
             except Exception as e:
                 logger.error(f"Error tombol rating: {e}")
                 await interaction.response.send_message("❌ Terjadi kesalahan.", ephemeral=True)
 
-        # B. Handler Tombol Lihat Ulasan (see_reviews:TOPIK)
         elif cid.startswith("see_reviews:"):
             try:
                 topic = cid.split(":")[1]
@@ -168,9 +222,9 @@ class RatingSystem(commands.Cog):
 
                 embed = discord.Embed(title=f"📋 Daftar Ulasan: {topic}", description=f"**Rata-rata:** ⭐ {avg}/5.0 | **Total:** {count} Ulasan", color=discord.Color.blue())
                 
-                limit = 8 # Limit agar tidak kepanjangan
+                limit = 8
                 for r in ratings[:limit]:
-                    user_id, stars, comment, created_at, image_url = r # Unpack image_url
+                    user_id, stars, comment, created_at, image_url = r
                     user = interaction.guild.get_member(user_id)
                     name = user.display_name if user else f"User {user_id}"
                     date_str = created_at.strftime("%d/%m/%Y")
@@ -179,11 +233,7 @@ class RatingSystem(commands.Cog):
                     if image_url:
                         text_val += f"\n🖼️ [Lihat Bukti]({image_url})"
                     
-                    embed.add_field(
-                        name=f"{'⭐' * stars} - {name} ({date_str})",
-                        value=text_val,
-                        inline=False
-                    )
+                    embed.add_field(name=f"{'⭐' * stars} - {name} ({date_str})", value=text_val, inline=False)
                 
                 if len(ratings) > limit:
                     embed.set_footer(text=f"Dan {len(ratings) - limit} ulasan lainnya...")
@@ -202,7 +252,6 @@ class RatingSystem(commands.Cog):
         else:
             await interaction.response.send_message("❌ Gagal menyimpan konfigurasi.", ephemeral=True)
 
-    # Command Updated: Tambah parameter 'required_role'
     @app_commands.command(name="create_rating_panel", description="Buat panel rating dengan statistik dan tombol ulasan.")
     @app_commands.describe(
         topik="Topik (cth: admin, server)",
@@ -220,7 +269,6 @@ class RatingSystem(commands.Cog):
         
         embed.add_field(name="📊 Statistik", value=f"⭐ **{avg}/5.0**\n👤 {count} Ulasan", inline=False)
         
-        # Info Role Permission
         role_id_str = "0"
         footer_text = f"Topik: {topik}"
         if required_role:
@@ -230,18 +278,10 @@ class RatingSystem(commands.Cog):
         embed.set_footer(text=footer_text)
 
         view = ui.View(timeout=None)
-        
-        # ID Button Format: rate:TOPIK:BINTANG:ROLE_ID
         for i in range(1, 6):
             view.add_item(ui.Button(label=str(i), emoji="⭐", custom_id=f"rate:{topik}:{i}:{role_id_str}", style=discord.ButtonStyle.secondary, row=0))
         
-        view.add_item(ui.Button(
-            label="Lihat Semua Ulasan", 
-            emoji="📜", 
-            custom_id=f"see_reviews:{topik}", 
-            style=discord.ButtonStyle.primary, 
-            row=1
-        ))
+        view.add_item(ui.Button(label="Lihat Semua Ulasan", emoji="📜", custom_id=f"see_reviews:{topik}", style=discord.ButtonStyle.primary, row=1))
 
         await interaction.channel.send(embed=embed, view=view)
         await interaction.response.send_message(f"✅ Panel Rating **{topik}** berhasil dibuat!", ephemeral=True)
