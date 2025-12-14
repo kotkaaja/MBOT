@@ -1,6 +1,7 @@
 import os
 import psycopg2
 import logging
+import json  # Ditambahkan untuk fitur catalog
 from datetime import date 
 
 logger = logging.getLogger(__name__)
@@ -64,19 +65,30 @@ def init_database():
                 );
             ''')
             
-            # MIGRATION: Cek apakah kolom image_url sudah ada, jika belum tambahkan (untuk update user lama)
+            # Tabel Role Catalogs (BARU)
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS role_catalogs (
+                    message_id BIGINT PRIMARY KEY,
+                    guild_id BIGINT,
+                    channel_id BIGINT,
+                    config_data TEXT
+                );
+            ''')
+            
+            # MIGRATION: Cek apakah kolom image_url sudah ada di ratings, jika belum tambahkan
             try:
                 cursor.execute("ALTER TABLE ratings ADD COLUMN IF NOT EXISTS image_url TEXT;")
             except Exception as e:
                 logger.warning(f"Info Migration: {e}")
 
         conn.commit()
-        logger.info("✅ Database berhasil diinisialisasi.")
+        logger.info("✅ Database berhasil diinisialisasi (termasuk Role Catalog).")
     except Exception as e:
         logger.error(f"❌ Gagal init database: {e}")
         conn.rollback()
 
-# --- FUNGSI PENDUKUNG LAINNYA (Sama seperti sebelumnya) ---
+# --- FUNGSI PENDUKUNG LAINNYA ---
+
 def set_upload_channel(guild_id, channel_id):
     conn = get_db_connection()
     if not conn: return False
@@ -170,7 +182,7 @@ def increment_ai_usage(user_id):
 
 
 # =================================================================
-# FUNGSI RATING (UPDATE)
+# FUNGSI RATING
 # =================================================================
 
 def set_rating_log_channel(guild_id, channel_id):
@@ -197,8 +209,7 @@ def add_rating(user_id, topic, stars, comment, image_url=None):
     if not conn: return False
     try:
         with conn.cursor() as cur:
-            # Jika image_url None, jangan timpa gambar lama jika sudah ada (COALESCE atau logic update)
-            # Simplifikasi: Selalu update timestamp
+            # Jika image_url None, jangan timpa gambar lama jika sudah ada
             cur.execute("""
                 INSERT INTO ratings (user_id, topic, stars, comment, image_url, created_at)
                 VALUES (%s, %s, %s, %s, %s, CURRENT_TIMESTAMP)
@@ -242,9 +253,47 @@ def get_all_ratings(topic):
     if not conn: return []
     try:
         with conn.cursor() as cur:
-            # Ambil juga image_url
             cur.execute("SELECT user_id, stars, comment, created_at, image_url FROM ratings WHERE topic = %s ORDER BY created_at DESC", (topic,))
             return cur.fetchall()
     except Exception as e:
         logger.error(f"Gagal get_all_ratings: {e}")
         return []
+
+# =================================================================
+# FUNGSI ROLE CATALOG (BARU)
+# =================================================================
+
+def save_catalog_config(message_id, guild_id, channel_id, config_data):
+    """Menyimpan konfigurasi katalog role baru."""
+    conn = get_db_connection()
+    if not conn: return False
+    try:
+        # Ubah dict ke JSON string sebelum simpan
+        data_str = json.dumps(config_data)
+        with conn.cursor() as cur:
+            cur.execute("""
+                INSERT INTO role_catalogs (message_id, guild_id, channel_id, config_data)
+                VALUES (%s, %s, %s, %s)
+                ON CONFLICT (message_id) DO UPDATE SET config_data = EXCLUDED.config_data
+            """, (message_id, guild_id, channel_id, data_str))
+        conn.commit()
+        return True
+    except Exception as e:
+        logger.error(f"Gagal save catalog: {e}")
+        conn.rollback()
+        return False
+
+def get_catalog_config(message_id):
+    """Mengambil konfigurasi katalog berdasarkan ID pesan."""
+    conn = get_db_connection()
+    if not conn: return None
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT config_data FROM role_catalogs WHERE message_id = %s", (message_id,))
+            res = cur.fetchone()
+        if res:
+            return json.loads(res[0])
+        return None
+    except Exception as e:
+        logger.error(f"Gagal get catalog: {e}")
+        return None
