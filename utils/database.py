@@ -59,9 +59,17 @@ def init_database():
                     stars INTEGER NOT NULL,
                     comment TEXT,
                     created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+                    image_url TEXT,
                     PRIMARY KEY (user_id, topic)
                 );
             ''')
+            
+            # MIGRATION: Cek apakah kolom image_url sudah ada, jika belum tambahkan (untuk update user lama)
+            try:
+                cursor.execute("ALTER TABLE ratings ADD COLUMN IF NOT EXISTS image_url TEXT;")
+            except Exception as e:
+                logger.warning(f"Info Migration: {e}")
+
         conn.commit()
         logger.info("✅ Database berhasil diinisialisasi.")
     except Exception as e:
@@ -184,20 +192,37 @@ def get_rating_log_channel(guild_id):
         return res[0] if res else None
     except: return None
 
-def add_rating(user_id, topic, stars, comment):
+def add_rating(user_id, topic, stars, comment, image_url=None):
+    conn = get_db_connection()
+    if not conn: return False
+    try:
+        with conn.cursor() as cur:
+            # Jika image_url None, jangan timpa gambar lama jika sudah ada (COALESCE atau logic update)
+            # Simplifikasi: Selalu update timestamp
+            cur.execute("""
+                INSERT INTO ratings (user_id, topic, stars, comment, image_url, created_at)
+                VALUES (%s, %s, %s, %s, %s, CURRENT_TIMESTAMP)
+                ON CONFLICT (user_id, topic) 
+                DO UPDATE SET stars = EXCLUDED.stars, comment = EXCLUDED.comment, image_url = COALESCE(EXCLUDED.image_url, ratings.image_url), created_at = CURRENT_TIMESTAMP;
+            """, (user_id, topic, stars, comment, image_url))
+        conn.commit()
+        return True
+    except: conn.rollback(); return False
+
+def update_rating_image(user_id, topic, image_url):
+    """Update URL gambar untuk rating yang sudah ada."""
     conn = get_db_connection()
     if not conn: return False
     try:
         with conn.cursor() as cur:
             cur.execute("""
-                INSERT INTO ratings (user_id, topic, stars, comment, created_at)
-                VALUES (%s, %s, %s, %s, CURRENT_TIMESTAMP)
-                ON CONFLICT (user_id, topic) 
-                DO UPDATE SET stars = EXCLUDED.stars, comment = EXCLUDED.comment, created_at = CURRENT_TIMESTAMP;
-            """, (user_id, topic, stars, comment))
+                UPDATE ratings SET image_url = %s WHERE user_id = %s AND topic = %s
+            """, (image_url, user_id, topic))
         conn.commit()
         return True
-    except: conn.rollback(); return False
+    except Exception as e:
+        logger.error(f"Gagal update rating image: {e}")
+        conn.rollback(); return False
 
 def get_rating_stats(topic):
     conn = get_db_connection()
@@ -211,15 +236,14 @@ def get_rating_stats(topic):
             return 0.0, 0
     except: return 0.0, 0
 
-# --- [BARU] Fungsi Ambil Semua Ulasan untuk Tombol Lihat Ulasan ---
 def get_all_ratings(topic):
     """Mengambil daftar ulasan untuk topik tertentu."""
     conn = get_db_connection()
     if not conn: return []
     try:
         with conn.cursor() as cur:
-            # Urutkan dari yang terbaru
-            cur.execute("SELECT user_id, stars, comment, created_at FROM ratings WHERE topic = %s ORDER BY created_at DESC", (topic,))
+            # Ambil juga image_url
+            cur.execute("SELECT user_id, stars, comment, created_at, image_url FROM ratings WHERE topic = %s ORDER BY created_at DESC", (topic,))
             return cur.fetchall()
     except Exception as e:
         logger.error(f"Gagal get_all_ratings: {e}")
