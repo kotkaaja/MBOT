@@ -36,26 +36,30 @@ class RoleAssignerCog(commands.Cog, name="RoleAssigner"):
             return
         
         roles_to_add = set()
-        message_content = message.content.lower()
         author_roles = message.author.roles
         
+        # Logika Penentuan Role
         if len(message.attachments) >= 2:
+            # Jika kirim 2 foto atau lebih, asumsikan Sub + Follow
             roles_to_add.add(subscriber_role)
             roles_to_add.add(follower_role)
         else:
-            has_youtube = "youtube" in message_content
-            has_tiktok = "tiktok" in message_content
-            if has_youtube or has_tiktok:
-                if has_youtube: roles_to_add.add(subscriber_role)
-                if has_tiktok: roles_to_add.add(follower_role)
-            else:
-                if subscriber_role not in author_roles: roles_to_add.add(subscriber_role)
-                elif follower_role not in author_roles: roles_to_add.add(follower_role)
+            # Jika kirim 1 foto, cek prioritas
+            if subscriber_role not in author_roles:
+                # Belum punya sub, kasih sub dulu
+                roles_to_add.add(subscriber_role)
+            elif follower_role not in author_roles:
+                # Sudah punya sub tapi belum follow, kasih follower
+                roles_to_add.add(follower_role)
                 
+        # Cek Role Verified (Gabungan Sub + Follow)
+        # Kita cek set role yang akan dimiliki user setelah penambahan ini
         potential_final_roles = set(author_roles).union(roles_to_add)
+        
         if subscriber_role in potential_final_roles and follower_role in potential_final_roles:
             roles_to_add.add(forge_verified_role)
             
+        # Filter role yang sudah dimiliki agar tidak error/redundant
         final_roles_to_add = [role for role in roles_to_add if role not in author_roles]
         
         if final_roles_to_add:
@@ -63,9 +67,26 @@ class RoleAssignerCog(commands.Cog, name="RoleAssigner"):
                 await message.author.add_roles(*final_roles_to_add, reason="Otomatis dari channel request role")
                 role_names = ", ".join([f"**{r.name}**" for r in final_roles_to_add])
                 
-                # Anda bisa mengkustomisasi pesan balasan ini
-                await message.reply(f"✅ Halo {message.author.mention}, Anda telah menerima role: {role_names}!, Anda bisa Mendownload Filenya di <#1444529534677291100> dan claim token di <#1417335499852353671>!")
+                # Logika Pesan Balasan (Custom Message)
+                # Skenario 1: Dapat Verified (Punya Sub & Follow) -> Akses Download
+                if forge_verified_role in final_roles_to_add or forge_verified_role in author_roles:
+                    reply_msg = (
+                        f"✅ Halo {message.author.mention}, Anda telah menerima role: {role_names}!\n"
+                        f"Anda bisa Mendownload Filenya di <#1444529534677291100> dan claim token di <#1417335499852353671>!"
+                    )
+                # Skenario 2: Baru dapat Subscriber saja -> Minta Follow
+                elif subscriber_role in final_roles_to_add and follower_role not in potential_final_roles:
+                    reply_msg = (
+                        f"✅ Halo {message.author.mention}, Anda telah menerima role: **{subscriber_role.name}**.\n"
+                        f"⚠️ **Satu langkah lagi!** Silahkan kirim bukti **Follow TikTok kotkaaja** untuk mendapatkan akses download file."
+                    )
+                # Skenario 3: Fallback (jarang terjadi dengan logika di atas)
+                else:
+                    reply_msg = f"✅ Halo {message.author.mention}, Anda telah menerima role: {role_names}!"
+
+                await message.reply(reply_msg)
                 await message.add_reaction('✅')
+                
             except discord.Forbidden: 
                 logger.error(f"GAGAL: Bot tidak memiliki izin 'Manage Roles'.")
             except Exception as e: 
